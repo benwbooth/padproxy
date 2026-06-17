@@ -68,12 +68,13 @@ Source pages consulted:
 
 ## Combos / Macros
 
-- Keyboard, mouse, and controller macro events.
-- Explicit down/up events.
-- Pauses.
+- Keyboard, mouse, and controller macro events. Basic controller button/axis
+  macro events done.
+- Explicit down/up events. Done for controller button macro events.
+- Pauses. Done for controller macros.
 - Rumble events.
 - Break/cancel events.
-- Execute-at-once macros.
+- Execute-at-once macros. Done for press-triggered controller macros.
 - Hold-until-release macros.
 - Relative stick deflection in macros.
 - Macro duration display.
@@ -182,6 +183,6 @@ Source pages consulted:
 3. Add hook mode to pick source and target controls by pressing buttons. Done.
 4. Add remap ON/OFF/apply lifecycle from the GUI. Done.
 5. Add virtual output type selection and hide/grab policy controls. Done for implemented outputs; planned outputs are visible but disabled until their virtual-device backends exist.
-6. Add layers, then activators, then macros. Basic main/shift layers are done with hold/toggle activation, disable mappings, and held-button turbo; richer activators and macros remain.
+6. Add layers, then activators, then macros. Basic main/shift layers are done with hold/toggle activation, disable mappings, held-button turbo, and press-triggered controller macros; richer activators and macros remain.
 7. Add analog tuning. Basic per-axis deadzone, sensitivity, inversion, and output range are done.
 8. Add process autodetect and Lunchbox integration.

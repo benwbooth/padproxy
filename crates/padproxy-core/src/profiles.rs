@@ -32,6 +32,8 @@ pub struct Mapping {
     pub to_name: String,
     pub action: MappingAction,
     pub turbo: Option<TurboSettings>,
+    #[serde(rename = "macro")]
+    pub macro_settings: Option<MacroSettings>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -39,11 +41,43 @@ pub struct Mapping {
 pub enum MappingAction {
     Map,
     Disable,
+    Macro,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct TurboSettings {
     pub interval_ms: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct MacroSettings {
+    pub mode: MacroMode,
+    pub events: Vec<MacroEvent>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MacroMode {
+    Press,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct MacroEvent {
+    pub kind: MacroEventKind,
+    pub code: Option<EventCode>,
+    pub code_name: String,
+    pub value: i32,
+    pub pause_ms: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MacroEventKind {
+    Down,
+    Up,
+    Tap,
+    Axis,
+    Pause,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -130,6 +164,9 @@ struct RawMapping {
     r#type: Option<String>,
     turbo: Option<RawTurbo>,
     turbo_interval_ms: Option<u64>,
+    #[serde(rename = "macro")]
+    macro_settings: Option<RawMacroSettings>,
+    macro_events: Option<Vec<RawMacroEvent>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -144,6 +181,23 @@ struct RawTurboObject {
     enabled: Option<bool>,
     interval_ms: Option<u64>,
     rate_hz: Option<f64>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawMacroSettings {
+    mode: Option<String>,
+    #[serde(default)]
+    events: Vec<RawMacroEvent>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawMacroEvent {
+    down: Option<String>,
+    up: Option<String>,
+    tap: Option<String>,
+    axis: Option<String>,
+    value: Option<i32>,
+    pause_ms: Option<u64>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -608,7 +662,12 @@ fn parse_mappings(mappings: Option<Vec<RawMapping>>, context: &str) -> Result<Ve
     for mapping in mappings.unwrap_or_default() {
         let from = parse_event_code(&mapping.from)
             .ok_or_else(|| anyhow!("unknown source event {} in {context}", mapping.from))?;
-        let action = parse_mapping_action(mapping.action.as_deref().or(mapping.r#type.as_deref()))?;
+        let action_value = mapping.action.as_deref().or(mapping.r#type.as_deref());
+        let mut action = parse_mapping_action(action_value)?;
+        let has_macro_settings = mapping.macro_settings.is_some() || mapping.macro_events.is_some();
+        if has_macro_settings && action_value.is_none() {
+            action = MappingAction::Macro;
+        }
         let to_value = mapping.to.as_deref();
         let action = match (action, to_value.map(normalize_mapping_keyword)) {
             (_, Some(keyword)) if matches!(keyword.as_str(), "disable" | "disabled" | "none") => {
@@ -616,6 +675,14 @@ fn parse_mappings(mappings: Option<Vec<RawMapping>>, context: &str) -> Result<Ve
             }
             (action, _) => action,
         };
+        let macro_settings = parse_macro_settings(
+            mapping.macro_settings,
+            mapping.macro_events,
+            action,
+            from,
+            &mapping.from,
+            context,
+        )?;
 
         let to = match action {
             MappingAction::Map => {
@@ -633,13 +700,25 @@ fn parse_mappings(mappings: Option<Vec<RawMapping>>, context: &str) -> Result<Ve
                 to
             }
             MappingAction::Disable => from,
+            MappingAction::Macro => macro_settings
+                .as_ref()
+                .and_then(|macro_settings| {
+                    macro_settings.events.iter().find_map(|event| event.code)
+                })
+                .unwrap_or(from),
         };
 
         let turbo = parse_turbo(mapping.turbo, mapping.turbo_interval_ms)?;
         if turbo.is_some() {
-            if action != MappingAction::Map {
+            if action == MappingAction::Disable {
                 return Err(anyhow!(
                     "disabled mapping from {} in {context} cannot use turbo",
+                    mapping.from
+                ));
+            }
+            if action == MappingAction::Macro {
+                return Err(anyhow!(
+                    "macro mapping from {} in {context} cannot use turbo",
                     mapping.from
                 ));
             }
@@ -659,6 +738,7 @@ fn parse_mappings(mappings: Option<Vec<RawMapping>>, context: &str) -> Result<Ve
             to_name: to.name(),
             action,
             turbo,
+            macro_settings,
         });
     }
     Ok(parsed)
@@ -672,7 +752,221 @@ fn parse_mapping_action(value: Option<&str>) -> Result<MappingAction> {
     match normalize_mapping_keyword(value).as_str() {
         "map" | "remap" | "virtual" | "controller" => Ok(MappingAction::Map),
         "disable" | "disabled" | "mute" | "block" | "none" => Ok(MappingAction::Disable),
+        "macro" | "combo" | "sequence" => Ok(MappingAction::Macro),
         other => Err(anyhow!("unknown mapping action {other}")),
+    }
+}
+
+fn parse_macro_settings(
+    raw: Option<RawMacroSettings>,
+    raw_events: Option<Vec<RawMacroEvent>>,
+    action: MappingAction,
+    from: EventCode,
+    from_name: &str,
+    context: &str,
+) -> Result<Option<MacroSettings>> {
+    if action != MappingAction::Macro {
+        if raw.is_some() || raw_events.is_some() {
+            return Err(anyhow!(
+                "mapping from {from_name} in {context} has macro events but action is not macro"
+            ));
+        }
+        return Ok(None);
+    }
+
+    if from.kind != EventKind::Key {
+        return Err(anyhow!(
+            "macro mapping from {from_name} in {context} requires a button source"
+        ));
+    }
+
+    let (mode, raw_events) = match (raw, raw_events) {
+        (Some(_), Some(_)) => {
+            return Err(anyhow!(
+                "macro mapping from {from_name} in {context} cannot use both macro and macro_events"
+            ))
+        }
+        (Some(raw), None) => (
+            raw.mode
+                .as_deref()
+                .map(parse_macro_mode)
+                .transpose()?
+                .unwrap_or(MacroMode::Press),
+            raw.events,
+        ),
+        (None, Some(raw_events)) => (MacroMode::Press, raw_events),
+        (None, None) => {
+            return Err(anyhow!(
+                "macro mapping from {from_name} in {context} requires macro events"
+            ))
+        }
+    };
+
+    if raw_events.is_empty() {
+        return Err(anyhow!(
+            "macro mapping from {from_name} in {context} requires at least one event"
+        ));
+    }
+
+    let mut events = Vec::new();
+    for (index, raw_event) in raw_events.into_iter().enumerate() {
+        events.push(parse_macro_event(raw_event, index, from_name, context)?);
+    }
+
+    Ok(Some(MacroSettings { mode, events }))
+}
+
+fn parse_macro_mode(value: &str) -> Result<MacroMode> {
+    match normalize_mapping_keyword(value).as_str() {
+        "press" | "single_press" | "on_press" | "execute" | "execute_at_once" => {
+            Ok(MacroMode::Press)
+        }
+        other => Err(anyhow!("unknown macro mode {other}")),
+    }
+}
+
+fn parse_macro_event(
+    raw: RawMacroEvent,
+    index: usize,
+    from_name: &str,
+    context: &str,
+) -> Result<MacroEvent> {
+    let specified = [
+        raw.down.is_some(),
+        raw.up.is_some(),
+        raw.tap.is_some(),
+        raw.axis.is_some(),
+        raw.pause_ms.is_some(),
+    ]
+    .into_iter()
+    .filter(|specified| *specified)
+    .count();
+
+    if specified != 1 {
+        return Err(anyhow!(
+            "macro event {} from {from_name} in {context} must set exactly one of down, up, tap, axis, or pause_ms",
+            index + 1
+        ));
+    }
+
+    if let Some(pause_ms) = raw.pause_ms {
+        if pause_ms > 60_000 {
+            return Err(anyhow!(
+                "macro pause_ms for event {} from {from_name} in {context} must be at most 60000",
+                index + 1
+            ));
+        }
+        return Ok(MacroEvent {
+            kind: MacroEventKind::Pause,
+            code: None,
+            code_name: String::new(),
+            value: 0,
+            pause_ms,
+        });
+    }
+
+    if let Some(code) = raw.down {
+        let code = parse_macro_target(&code, MacroEventKind::Down, index, from_name, context)?;
+        return Ok(MacroEvent {
+            kind: MacroEventKind::Down,
+            code: Some(code),
+            code_name: code.name(),
+            value: 1,
+            pause_ms: 0,
+        });
+    }
+
+    if let Some(code) = raw.up {
+        let code = parse_macro_target(&code, MacroEventKind::Up, index, from_name, context)?;
+        return Ok(MacroEvent {
+            kind: MacroEventKind::Up,
+            code: Some(code),
+            code_name: code.name(),
+            value: 0,
+            pause_ms: 0,
+        });
+    }
+
+    if let Some(code) = raw.tap {
+        let code = parse_macro_target(&code, MacroEventKind::Tap, index, from_name, context)?;
+        return Ok(MacroEvent {
+            kind: MacroEventKind::Tap,
+            code: Some(code),
+            code_name: code.name(),
+            value: 1,
+            pause_ms: 0,
+        });
+    }
+
+    let code = raw
+        .axis
+        .expect("specified count guarantees axis is present when no other event matched");
+    let code = parse_macro_target(&code, MacroEventKind::Axis, index, from_name, context)?;
+    let value = raw.value.ok_or_else(|| {
+        anyhow!(
+            "macro axis event {} from {from_name} in {context} requires value",
+            index + 1
+        )
+    })?;
+    let range = AxisRange::for_event(code).ok_or_else(|| {
+        anyhow!(
+            "macro axis event {} from {from_name} in {context} must target an absolute axis",
+            index + 1
+        )
+    })?;
+    if value < range.min || value > range.max {
+        return Err(anyhow!(
+            "macro axis value for event {} from {from_name} in {context} must stay within {}..{}",
+            index + 1,
+            range.min,
+            range.max
+        ));
+    }
+
+    Ok(MacroEvent {
+        kind: MacroEventKind::Axis,
+        code: Some(code),
+        code_name: code.name(),
+        value,
+        pause_ms: 0,
+    })
+}
+
+fn parse_macro_target(
+    value: &str,
+    kind: MacroEventKind,
+    index: usize,
+    from_name: &str,
+    context: &str,
+) -> Result<EventCode> {
+    let code = parse_event_code(value).ok_or_else(|| {
+        anyhow!(
+            "unknown macro target event {value} for event {} from {from_name} in {context}",
+            index + 1
+        )
+    })?;
+    if !virtual_xbox_supports(code) {
+        return Err(anyhow!(
+            "macro target event {} for event {} from {from_name} in {context} is not supported by the current virtual pad",
+            code.name(),
+            index + 1
+        ));
+    }
+
+    match kind {
+        MacroEventKind::Down | MacroEventKind::Up | MacroEventKind::Tap
+            if code.kind != EventKind::Key =>
+        {
+            Err(anyhow!(
+                "macro button event {} from {from_name} in {context} must target a button",
+                index + 1
+            ))
+        }
+        MacroEventKind::Axis if code.kind != EventKind::Absolute => Err(anyhow!(
+            "macro axis event {} from {from_name} in {context} must target an absolute axis",
+            index + 1
+        )),
+        _ => Ok(code),
     }
 }
 
@@ -865,8 +1159,8 @@ mod tests {
     use crate::event_code::parse_event_code;
 
     use super::{
-        parse_profile_bytes, AnalogTuning, LayerActivationMode, MappingAction,
-        DEFAULT_TURBO_INTERVAL_MS, MAIN_LAYER_ID, MAX_SHIFT_LAYERS,
+        parse_profile_bytes, AnalogTuning, LayerActivationMode, MacroEventKind, MacroMode,
+        MappingAction, DEFAULT_TURBO_INTERVAL_MS, MAIN_LAYER_ID, MAX_SHIFT_LAYERS,
     };
     use std::path::Path;
 
@@ -1014,6 +1308,107 @@ mappings:
         assert!(
             axis_error.contains("button source and target"),
             "{axis_error}"
+        );
+    }
+
+    #[test]
+    fn parses_controller_macro_mappings() {
+        let profile = parse_profile_bytes(
+            br#"
+id: macro
+mappings:
+  - from: btn:start
+    action: macro
+    macro:
+      mode: press
+      events:
+        - down: btn:south
+        - pause_ms: 40
+        - up: btn:south
+        - tap: btn:east
+        - axis: abs:x
+          value: 12000
+        - pause_ms: 20
+        - axis: abs:x
+          value: 0
+"#,
+            Path::new("macro.yaml"),
+        )
+        .unwrap();
+
+        assert_eq!(profile.mappings.len(), 1);
+        assert_eq!(profile.mappings[0].action, MappingAction::Macro);
+        assert_eq!(profile.mappings[0].to_name, "btn:south");
+        assert!(profile.mapping_table().is_empty());
+
+        let macro_settings = profile.mappings[0].macro_settings.as_ref().unwrap();
+        assert_eq!(macro_settings.mode, MacroMode::Press);
+        assert_eq!(macro_settings.events.len(), 7);
+        assert_eq!(macro_settings.events[0].kind, MacroEventKind::Down);
+        assert_eq!(macro_settings.events[0].code_name, "btn:south");
+        assert_eq!(macro_settings.events[1].kind, MacroEventKind::Pause);
+        assert_eq!(macro_settings.events[1].pause_ms, 40);
+        assert_eq!(macro_settings.events[3].kind, MacroEventKind::Tap);
+        assert_eq!(macro_settings.events[4].kind, MacroEventKind::Axis);
+        assert_eq!(macro_settings.events[4].code_name, "abs:x");
+        assert_eq!(macro_settings.events[4].value, 12000);
+    }
+
+    #[test]
+    fn rejects_invalid_macro_mappings() {
+        let axis_source_error = parse_profile_bytes(
+            br#"
+id: axis-source
+mappings:
+  - from: abs:x
+    action: macro
+    macro:
+      events:
+        - tap: btn:south
+"#,
+            Path::new("axis-source.yaml"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            axis_source_error.contains("requires a button source"),
+            "{axis_source_error}"
+        );
+
+        let turbo_error = parse_profile_bytes(
+            br#"
+id: turbo-macro
+mappings:
+  - from: btn:start
+    action: macro
+    turbo: true
+    macro:
+      events:
+        - tap: btn:south
+"#,
+            Path::new("turbo-macro.yaml"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(turbo_error.contains("cannot use turbo"), "{turbo_error}");
+
+        let bad_axis_error = parse_profile_bytes(
+            br#"
+id: bad-axis-macro
+mappings:
+  - from: btn:start
+    action: macro
+    macro:
+      events:
+        - axis: abs:x
+"#,
+            Path::new("bad-axis-macro.yaml"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            bad_axis_error.contains("requires value"),
+            "{bad_axis_error}"
         );
     }
 

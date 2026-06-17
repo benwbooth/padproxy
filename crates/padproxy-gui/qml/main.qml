@@ -63,7 +63,8 @@ ApplicationWindow {
     ]
     property var mappingActionOptions: [
         { label: "Map", action: "map" },
-        { label: "Disable", action: "disable" }
+        { label: "Disable", action: "disable" },
+        { label: "Macro", action: "macro" }
     ]
     property var eventCodes: [
         "btn:south",
@@ -97,6 +98,21 @@ ApplicationWindow {
         "abs:rz",
         "abs:hat0x",
         "abs:hat0y"
+    ]
+    property var buttonEventCodes: [
+        "btn:south",
+        "btn:east",
+        "btn:west",
+        "btn:north",
+        "btn:tl",
+        "btn:tr",
+        "btn:tl2",
+        "btn:tr2",
+        "btn:select",
+        "btn:start",
+        "btn:mode",
+        "btn:thumbl",
+        "btn:thumbr"
     ]
     property var controllerTemplates: [
         {
@@ -403,15 +419,28 @@ ApplicationWindow {
         const rows = []
         for (let i = 0; mappings && i < mappings.length; i++) {
             const turbo = mappings[i].turbo || null
+            const action = mappings[i].action || "map"
             rows.push({
                 fromCode: mappings[i].from_name || mappings[i].from || "btn:south",
-                toCode: mappings[i].to_name || mappings[i].to || "btn:south",
-                action: mappings[i].action || "map",
+                toCode: action === "macro"
+                    ? root.macroTargetFromProfile(mappings[i])
+                    : mappings[i].to_name || mappings[i].to || "btn:south",
+                action: action,
                 turboEnabled: turbo !== null,
                 turboIntervalMs: turbo && turbo.interval_ms ? turbo.interval_ms : 75
             })
         }
         return rows
+    }
+
+    function macroTargetFromProfile(mapping) {
+        const macro = mapping && mapping.macro ? mapping.macro : null
+        const events = macro && macro.events ? macro.events : []
+        for (let i = 0; i < events.length; i++) {
+            if (events[i].code_name && events[i].code_name.length > 0)
+                return events[i].code_name
+        }
+        return mapping.to_name || mapping.to || "btn:south"
     }
 
     function setMappingRows(rows) {
@@ -726,6 +755,11 @@ ApplicationWindow {
         text += indent + "- from: " + row.fromCode + "\n"
         if (action === "disable") {
             text += indent + "  action: disable\n"
+        } else if (action === "macro") {
+            text += indent + "  action: macro\n"
+            text += indent + "  macro:\n"
+            text += indent + "    events:\n"
+            text += indent + "      - tap: " + (row.toCode || "btn:south") + "\n"
         } else {
             text += indent + "  to: " + row.toCode + "\n"
             if (row.turboEnabled === true) {
@@ -1496,6 +1530,8 @@ ApplicationWindow {
                                                 + root.eventLabel(row.fromCode)
                                             if (row.action === "disable")
                                                 return prefix + " disabled"
+                                            if (row.action === "macro")
+                                                return prefix + " macro tap " + root.eventLabel(row.toCode)
                                             return prefix + " -> " + root.eventLabel(row.toCode)
                                                 + (row.turboEnabled === true ? " turbo" : "")
                                         })()
@@ -1573,20 +1609,26 @@ ApplicationWindow {
                                                     root.selectedMappingIndex = index
                                                     const nextAction = root.mappingActionAt(actionIndex)
                                                     mappingsModel.setProperty(index, "action", nextAction)
-                                                    if (nextAction === "disable")
+                                                    if (nextAction === "disable" || nextAction === "macro")
                                                         mappingsModel.setProperty(index, "turboEnabled", false)
+                                                    if (nextAction === "macro"
+                                                            && root.buttonEventCodes.indexOf(toCode) < 0)
+                                                        mappingsModel.setProperty(index, "toCode", "btn:south")
                                                 }
                                             }
 
                                             Label {
-                                                text: action === "disable" ? "" : "to"
+                                                text: action === "disable" ? "" : action === "macro" ? "tap" : "to"
                                                 horizontalAlignment: Text.AlignHCenter
                                                 Layout.preferredWidth: 24
                                             }
 
                                             ComboBox {
-                                                model: root.eventCodes
-                                                currentIndex: Math.max(0, root.eventCodes.indexOf(toCode))
+                                                readonly property var targetCodes: action === "macro"
+                                                    ? root.buttonEventCodes
+                                                    : root.eventCodes
+                                                model: targetCodes
+                                                currentIndex: Math.max(0, targetCodes.indexOf(toCode))
                                                 Layout.fillWidth: true
                                                 enabled: action !== "disable"
                                                 opacity: enabled ? 1.0 : 0.35
@@ -1607,7 +1649,7 @@ ApplicationWindow {
 
                                             CheckBox {
                                                 text: "Turbo"
-                                                enabled: action !== "disable"
+                                                enabled: action !== "disable" && action !== "macro"
                                                 checked: turboEnabled === true
                                                 Layout.preferredWidth: 78
                                                 onToggled: {
@@ -1622,7 +1664,7 @@ ApplicationWindow {
                                                 stepSize: 5
                                                 editable: true
                                                 value: root.normalizedTurboInterval(turboIntervalMs)
-                                                enabled: action !== "disable" && turboEnabled === true
+                                                enabled: action !== "disable" && action !== "macro" && turboEnabled === true
                                                 visible: enabled
                                                 Layout.preferredWidth: 88
                                                 onValueModified: {

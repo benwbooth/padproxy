@@ -89,11 +89,14 @@ source or target control from the selected physical controller. The layer
 selector edits the main layer plus up to ten shift layers, each activated by a
 hold or toggle control. Individual mapping rows can map, disable, or turbo a
 button output. The analog panel tunes virtual axes with deadzone, sensitivity,
-inversion, and output range controls. The editor shows implemented and planned
-virtual outputs, but only implemented outputs can be applied. `Apply` starts a
-background remap using the selected controller and current profile contents;
-`Remap Off` stops it and removes the virtual controller. The `YAML` tab remains
-available for raw edits. `Save` writes the result to
+inversion, and output range controls. Macro rows can tap a virtual button from
+the structured editor; the raw YAML editor also supports explicit controller
+button down/up events, axis set events, and pauses. The editor shows
+implemented and planned virtual outputs, but only implemented outputs can be
+applied. `Apply` starts a background remap using the selected controller and
+current profile contents; `Remap Off` stops it and removes the virtual
+controller. The `YAML` tab remains available for raw edits. `Save` writes the
+result to
 `~/.config/padproxy/profiles.d`. Packaged profiles are read-only; saving one
 creates a user copy with the same profile id.
 
@@ -129,6 +132,15 @@ mappings:
       interval_ms: 75
   - from: btn:mode
     action: disable
+  - from: btn:start
+    action: macro
+    macro:
+      events:
+        - tap: btn:south
+        - pause_ms: 50
+        - down: btn:east
+        - pause_ms: 50
+        - up: btn:east
   - from: btn:east
     to: btn:west
   - from: btn:west

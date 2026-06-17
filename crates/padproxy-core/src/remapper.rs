@@ -1,7 +1,8 @@
 use crate::event_code::{event_from_input, virtual_xbox_supports, EventCode, EventKind};
 use crate::outputs::{output_device, supported_output_ids};
 use crate::profiles::{
-    AnalogTuning, LayerActivation, LayerActivationMode, Mapping, MappingAction, Profile,
+    AnalogTuning, LayerActivation, LayerActivationMode, MacroEventKind, MacroSettings, Mapping,
+    MappingAction, Profile,
 };
 use anyhow::{anyhow, Context, Result};
 use evdev::uinput::VirtualDevice;
@@ -9,7 +10,7 @@ use evdev::{
     AbsInfo, AbsoluteAxisCode, AttributeSet, BusType, Device, EventType, InputEvent, InputId,
     KeyCode, UinputAbsSetup,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
@@ -39,6 +40,8 @@ pub struct RemapRuntime {
     toggled_layers: HashSet<usize>,
     pressed_activators: HashSet<(usize, EventCode)>,
     pressed_key_targets: HashMap<EventCode, EventCode>,
+    pressed_macro_sources: HashSet<EventCode>,
+    macro_queue: VecDeque<ScheduledMacroEvent>,
     turbo_states: HashMap<EventCode, TurboState>,
     analog_tuning: HashMap<EventCode, AnalogTuning>,
     virtual_nodes: Vec<String>,
@@ -49,12 +52,13 @@ struct RuntimeLayer {
     mappings: HashMap<EventCode, Mapping>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct ResolvedMapping {
     action: MappingAction,
     target: EventCode,
     mapped: bool,
     turbo_interval: Option<Duration>,
+    macro_settings: Option<MacroSettings>,
 }
 
 struct TurboState {
@@ -62,6 +66,12 @@ struct TurboState {
     interval: Duration,
     next_toggle: Instant,
     output_down: bool,
+}
+
+struct ScheduledMacroEvent {
+    due: Instant,
+    event: EventCode,
+    value: i32,
 }
 
 pub fn launch_with_remap(options: LaunchOptions) -> Result<i32> {
@@ -162,6 +172,8 @@ impl RemapRuntime {
             toggled_layers: HashSet::new(),
             pressed_activators: HashSet::new(),
             pressed_key_targets: HashMap::new(),
+            pressed_macro_sources: HashSet::new(),
+            macro_queue: VecDeque::new(),
             turbo_states: HashMap::new(),
             analog_tuning,
             virtual_nodes,
@@ -203,6 +215,7 @@ impl RemapRuntime {
             self.push_mapped_event(source_event, event.value(), &mut output);
         }
 
+        self.push_due_macro_events(&mut output);
         self.push_due_turbo_events(&mut output);
 
         if !output.is_empty() {
@@ -267,6 +280,10 @@ impl RemapRuntime {
         output: &mut Vec<InputEvent>,
     ) {
         if value == 0 {
+            if self.pressed_macro_sources.remove(&source_event) {
+                return;
+            }
+
             let Some(target_event) = self.pressed_key_targets.remove(&source_event) else {
                 let resolved = self.resolved_mapping(source_event);
                 if resolved.action == MappingAction::Map
@@ -288,12 +305,22 @@ impl RemapRuntime {
             return;
         }
 
-        if self.pressed_key_targets.contains_key(&source_event) {
+        if self.pressed_key_targets.contains_key(&source_event)
+            || self.pressed_macro_sources.contains(&source_event)
+        {
             return;
         }
 
         let resolved = self.resolved_mapping(source_event);
-        if resolved.action == MappingAction::Disable
+        if resolved.action == MappingAction::Macro {
+            if let Some(macro_settings) = resolved.macro_settings.as_ref() {
+                self.pressed_macro_sources.insert(source_event);
+                self.enqueue_macro_events(macro_settings);
+            }
+            return;
+        }
+
+        if resolved.action != MappingAction::Map
             || (!self.profile.passthrough && !resolved.mapped)
             || !virtual_xbox_supports(resolved.target)
         {
@@ -324,7 +351,7 @@ impl RemapRuntime {
         output: &mut Vec<InputEvent>,
     ) {
         let resolved = self.resolved_mapping(source_event);
-        if resolved.action == MappingAction::Disable
+        if resolved.action != MappingAction::Map
             || (!self.profile.passthrough && !resolved.mapped)
             || !virtual_xbox_supports(resolved.target)
         {
@@ -332,6 +359,77 @@ impl RemapRuntime {
         }
         let value = self.apply_analog_tuning(source_event, resolved.target, value);
         push_input_event(output, resolved.target, value);
+    }
+
+    fn enqueue_macro_events(&mut self, macro_settings: &MacroSettings) {
+        const TAP_RELEASE_MS: u64 = 20;
+
+        let now = Instant::now();
+        let mut offset = Duration::ZERO;
+
+        for event in &macro_settings.events {
+            match event.kind {
+                MacroEventKind::Pause => {
+                    offset += Duration::from_millis(event.pause_ms);
+                }
+                MacroEventKind::Tap => {
+                    if let Some(code) = event.code {
+                        self.queue_macro_event(ScheduledMacroEvent {
+                            due: now + offset,
+                            event: code,
+                            value: 1,
+                        });
+                        offset += Duration::from_millis(TAP_RELEASE_MS);
+                        self.queue_macro_event(ScheduledMacroEvent {
+                            due: now + offset,
+                            event: code,
+                            value: 0,
+                        });
+                    }
+                }
+                MacroEventKind::Down | MacroEventKind::Up | MacroEventKind::Axis => {
+                    if let Some(code) = event.code {
+                        self.queue_macro_event(ScheduledMacroEvent {
+                            due: now + offset,
+                            event: code,
+                            value: event.value,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    fn queue_macro_event(&mut self, scheduled: ScheduledMacroEvent) {
+        let index = self
+            .macro_queue
+            .iter()
+            .position(|existing| scheduled.due < existing.due)
+            .unwrap_or(self.macro_queue.len());
+        self.macro_queue.insert(index, scheduled);
+    }
+
+    fn push_due_macro_events(&mut self, output: &mut Vec<InputEvent>) {
+        let now = Instant::now();
+        loop {
+            let Some(front) = self.macro_queue.front() else {
+                break;
+            };
+            if now < front.due {
+                break;
+            }
+
+            let scheduled = self
+                .macro_queue
+                .pop_front()
+                .expect("front existed before pop");
+            let value = if scheduled.event.kind == EventKind::Absolute {
+                self.apply_analog_tuning(scheduled.event, scheduled.event, scheduled.value)
+            } else {
+                scheduled.value
+            };
+            push_input_event(output, scheduled.event, value);
+        }
     }
 
     fn push_due_turbo_events(&mut self, output: &mut Vec<InputEvent>) {
@@ -360,12 +458,14 @@ impl RemapRuntime {
                     .turbo
                     .as_ref()
                     .map(|turbo| Duration::from_millis(turbo.interval_ms)),
+                macro_settings: mapping.macro_settings.clone(),
             })
             .unwrap_or(ResolvedMapping {
                 action: MappingAction::Map,
                 target: source_event,
                 mapped: false,
                 turbo_interval: None,
+                macro_settings: None,
             })
     }
 
