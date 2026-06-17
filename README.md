@@ -8,6 +8,9 @@ target program receives the virtual controller instead of the physical one.
 The initial target is emulator launches from Lunchbox, but the project is
 structured as a standalone tool with a Qt interface and YAML profiles.
 
+The long-term reWASD-style feature target is tracked in
+[`docs/REWASD_FEATURE_MATRIX.md`](docs/REWASD_FEATURE_MATRIX.md).
+
 ## Layout
 
 - `crates/padproxy-core`: Qt-free controller discovery, profile loading, and
