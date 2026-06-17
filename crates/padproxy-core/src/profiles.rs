@@ -34,6 +34,7 @@ pub struct Mapping {
     pub turbo: Option<TurboSettings>,
     #[serde(rename = "macro")]
     pub macro_settings: Option<MacroSettings>,
+    pub command: Option<CommandSettings>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -42,6 +43,7 @@ pub enum MappingAction {
     Map,
     Disable,
     Macro,
+    Command,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -54,6 +56,17 @@ pub struct MacroSettings {
     pub mode: MacroMode,
     pub events: Vec<MacroEvent>,
     pub release_events: Vec<MacroEvent>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct CommandSettings {
+    pub action: CommandAction,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandAction {
+    StopMacros,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -169,6 +182,7 @@ struct RawMapping {
     #[serde(rename = "macro")]
     macro_settings: Option<RawMacroSettings>,
     macro_events: Option<Vec<RawMacroEvent>>,
+    command: Option<RawCommandSettings>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -201,6 +215,20 @@ struct RawMacroEvent {
     axis: Option<String>,
     value: Option<i32>,
     pause_ms: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum RawCommandSettings {
+    Scalar(String),
+    Object(RawCommandObject),
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawCommandObject {
+    action: Option<String>,
+    name: Option<String>,
+    command: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -671,6 +699,9 @@ fn parse_mappings(mappings: Option<Vec<RawMapping>>, context: &str) -> Result<Ve
         if has_macro_settings && action_value.is_none() {
             action = MappingAction::Macro;
         }
+        if mapping.command.is_some() && action_value.is_none() {
+            action = MappingAction::Command;
+        }
         let to_value = mapping.to.as_deref();
         let action = match (action, to_value.map(normalize_mapping_keyword)) {
             (_, Some(keyword)) if matches!(keyword.as_str(), "disable" | "disabled" | "none") => {
@@ -686,6 +717,8 @@ fn parse_mappings(mappings: Option<Vec<RawMapping>>, context: &str) -> Result<Ve
             &mapping.from,
             context,
         )?;
+        let command =
+            parse_command_settings(mapping.command, action, from, &mapping.from, context)?;
 
         let to = match action {
             MappingAction::Map => {
@@ -709,6 +742,7 @@ fn parse_mappings(mappings: Option<Vec<RawMapping>>, context: &str) -> Result<Ve
                     macro_settings.events.iter().find_map(|event| event.code)
                 })
                 .unwrap_or(from),
+            MappingAction::Command => from,
         };
 
         let turbo = parse_turbo(mapping.turbo, mapping.turbo_interval_ms)?;
@@ -722,6 +756,12 @@ fn parse_mappings(mappings: Option<Vec<RawMapping>>, context: &str) -> Result<Ve
             if action == MappingAction::Macro {
                 return Err(anyhow!(
                     "macro mapping from {} in {context} cannot use turbo",
+                    mapping.from
+                ));
+            }
+            if action == MappingAction::Command {
+                return Err(anyhow!(
+                    "command mapping from {} in {context} cannot use turbo",
                     mapping.from
                 ));
             }
@@ -742,6 +782,7 @@ fn parse_mappings(mappings: Option<Vec<RawMapping>>, context: &str) -> Result<Ve
             action,
             turbo,
             macro_settings,
+            command,
         });
     }
     Ok(parsed)
@@ -756,7 +797,56 @@ fn parse_mapping_action(value: Option<&str>) -> Result<MappingAction> {
         "map" | "remap" | "virtual" | "controller" => Ok(MappingAction::Map),
         "disable" | "disabled" | "mute" | "block" | "none" => Ok(MappingAction::Disable),
         "macro" | "combo" | "sequence" => Ok(MappingAction::Macro),
+        "command" | "cmd" => Ok(MappingAction::Command),
         other => Err(anyhow!("unknown mapping action {other}")),
+    }
+}
+
+fn parse_command_settings(
+    raw: Option<RawCommandSettings>,
+    action: MappingAction,
+    from: EventCode,
+    from_name: &str,
+    context: &str,
+) -> Result<Option<CommandSettings>> {
+    if action != MappingAction::Command {
+        if raw.is_some() {
+            return Err(anyhow!(
+                "mapping from {from_name} in {context} has a command but action is not command"
+            ));
+        }
+        return Ok(None);
+    }
+
+    if from.kind != EventKind::Key {
+        return Err(anyhow!(
+            "command mapping from {from_name} in {context} requires a button source"
+        ));
+    }
+
+    let raw = raw
+        .ok_or_else(|| anyhow!("command mapping from {from_name} in {context} requires command"))?;
+    let value = match raw {
+        RawCommandSettings::Scalar(value) => value,
+        RawCommandSettings::Object(object) => object
+            .action
+            .or(object.name)
+            .or(object.command)
+            .ok_or_else(|| {
+                anyhow!("command mapping from {from_name} in {context} requires command action")
+            })?,
+    };
+
+    Ok(Some(CommandSettings {
+        action: parse_command_action(&value)?,
+    }))
+}
+
+fn parse_command_action(value: &str) -> Result<CommandAction> {
+    match normalize_mapping_keyword(value).as_str() {
+        "stop_macros" | "stop_all_macros" | "cancel_macros" | "cancel_all_macros"
+        | "break_macros" | "clear_macro_queue" => Ok(CommandAction::StopMacros),
+        other => Err(anyhow!("unknown command action {other}")),
     }
 }
 
@@ -1252,8 +1342,8 @@ mod tests {
     use crate::event_code::parse_event_code;
 
     use super::{
-        parse_profile_bytes, AnalogTuning, LayerActivationMode, MacroEventKind, MacroMode,
-        MappingAction, DEFAULT_TURBO_INTERVAL_MS, MAIN_LAYER_ID, MAX_SHIFT_LAYERS,
+        parse_profile_bytes, AnalogTuning, CommandAction, LayerActivationMode, MacroEventKind,
+        MacroMode, MappingAction, DEFAULT_TURBO_INTERVAL_MS, MAIN_LAYER_ID, MAX_SHIFT_LAYERS,
     };
     use std::path::Path;
 
@@ -1365,6 +1455,102 @@ mappings:
             DEFAULT_TURBO_INTERVAL_MS
         );
         assert_eq!(profile.mappings[2].turbo.as_ref().unwrap().interval_ms, 120);
+    }
+
+    #[test]
+    fn parses_command_mappings() {
+        let profile = parse_profile_bytes(
+            br#"
+id: commands
+mappings:
+  - from: btn:select
+    action: command
+    command: stop_macros
+  - from: btn:mode
+    command:
+      action: cancel_all_macros
+"#,
+            Path::new("commands.yaml"),
+        )
+        .unwrap();
+
+        assert_eq!(profile.mappings.len(), 2);
+        assert_eq!(profile.mappings[0].action, MappingAction::Command);
+        assert_eq!(profile.mappings[0].to_name, "btn:select");
+        assert!(profile.mapping_table().is_empty());
+        assert_eq!(
+            profile.mappings[0].command.as_ref().unwrap().action,
+            CommandAction::StopMacros
+        );
+        assert_eq!(
+            profile.mappings[1].command.as_ref().unwrap().action,
+            CommandAction::StopMacros
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_command_mappings() {
+        let missing_command = parse_profile_bytes(
+            br#"
+id: missing-command
+mappings:
+  - from: btn:south
+    action: command
+"#,
+            Path::new("missing-command.yaml"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            missing_command.contains("requires command"),
+            "{missing_command}"
+        );
+
+        let axis_source = parse_profile_bytes(
+            br#"
+id: command-axis-source
+mappings:
+  - from: abs:x
+    action: command
+    command: stop_macros
+"#,
+            Path::new("command-axis-source.yaml"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            axis_source.contains("requires a button source"),
+            "{axis_source}"
+        );
+
+        let turbo_error = parse_profile_bytes(
+            br#"
+id: command-turbo
+mappings:
+  - from: btn:south
+    action: command
+    command: stop_macros
+    turbo: true
+"#,
+            Path::new("command-turbo.yaml"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(turbo_error.contains("cannot use turbo"), "{turbo_error}");
+
+        let unknown = parse_profile_bytes(
+            br#"
+id: unknown-command
+mappings:
+  - from: btn:south
+    action: command
+    command: launch_missiles
+"#,
+            Path::new("unknown-command.yaml"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(unknown.contains("unknown command action"), "{unknown}");
     }
 
     #[test]

@@ -50,7 +50,8 @@ Source pages consulted:
 - Virtual mappings that emit through a virtual device.
 - Mute physical input while virtual output is active.
 - Disable a source button entirely. Done for controller inputs.
-- Commands, such as turn remap off.
+- Commands, such as turn remap off. Basic PadProxy command mappings done for
+  stopping queued and held macros.
 - Launch app / run command mappings.
 
 ## Activators
@@ -78,7 +79,7 @@ Source pages consulted:
 - Hold-until-release macros. Basic controller hold macros done.
 - Relative stick deflection in macros.
 - Macro duration display.
-- Stop all macros shortcut.
+- Stop all macros shortcut. Done as a controller command mapping.
 
 ## Layers and Slots
 

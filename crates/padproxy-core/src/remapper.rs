@@ -1,8 +1,8 @@
 use crate::event_code::{event_from_input, virtual_xbox_supports, EventCode, EventKind};
 use crate::outputs::{output_device, supported_output_ids};
 use crate::profiles::{
-    AnalogTuning, LayerActivation, LayerActivationMode, MacroEvent, MacroEventKind, MacroMode,
-    MacroSettings, Mapping, MappingAction, Profile,
+    AnalogTuning, CommandAction, CommandSettings, LayerActivation, LayerActivationMode, MacroEvent,
+    MacroEventKind, MacroMode, MacroSettings, Mapping, MappingAction, Profile,
 };
 use anyhow::{anyhow, Context, Result};
 use evdev::uinput::VirtualDevice;
@@ -41,8 +41,11 @@ pub struct RemapRuntime {
     pressed_activators: HashSet<(usize, EventCode)>,
     pressed_key_targets: HashMap<EventCode, EventCode>,
     pressed_macro_sources: HashSet<EventCode>,
+    pressed_command_sources: HashSet<EventCode>,
     held_macro_releases: HashMap<EventCode, Vec<MacroEvent>>,
     macro_queue: VecDeque<ScheduledMacroEvent>,
+    macro_output_keys: HashSet<EventCode>,
+    macro_output_axes: HashMap<EventCode, i32>,
     turbo_states: HashMap<EventCode, TurboState>,
     analog_tuning: HashMap<EventCode, AnalogTuning>,
     virtual_nodes: Vec<String>,
@@ -60,6 +63,7 @@ struct ResolvedMapping {
     mapped: bool,
     turbo_interval: Option<Duration>,
     macro_settings: Option<MacroSettings>,
+    command: Option<CommandSettings>,
 }
 
 struct TurboState {
@@ -174,8 +178,11 @@ impl RemapRuntime {
             pressed_activators: HashSet::new(),
             pressed_key_targets: HashMap::new(),
             pressed_macro_sources: HashSet::new(),
+            pressed_command_sources: HashSet::new(),
             held_macro_releases: HashMap::new(),
             macro_queue: VecDeque::new(),
+            macro_output_keys: HashSet::new(),
+            macro_output_axes: HashMap::new(),
             turbo_states: HashMap::new(),
             analog_tuning,
             virtual_nodes,
@@ -282,6 +289,10 @@ impl RemapRuntime {
         output: &mut Vec<InputEvent>,
     ) {
         if value == 0 {
+            if self.pressed_command_sources.remove(&source_event) {
+                return;
+            }
+
             if self.pressed_macro_sources.remove(&source_event) {
                 if let Some(release_events) = self.held_macro_releases.remove(&source_event) {
                     self.enqueue_macro_sequence(&release_events);
@@ -312,6 +323,7 @@ impl RemapRuntime {
 
         if self.pressed_key_targets.contains_key(&source_event)
             || self.pressed_macro_sources.contains(&source_event)
+            || self.pressed_command_sources.contains(&source_event)
         {
             return;
         }
@@ -325,6 +337,14 @@ impl RemapRuntime {
                     self.held_macro_releases
                         .insert(source_event, macro_settings.release_events);
                 }
+            }
+            return;
+        }
+
+        if resolved.action == MappingAction::Command {
+            if let Some(command) = resolved.command.as_ref() {
+                self.pressed_command_sources.insert(source_event);
+                self.execute_command(command.action, output);
             }
             return;
         }
@@ -409,6 +429,34 @@ impl RemapRuntime {
         }
     }
 
+    fn execute_command(&mut self, action: CommandAction, output: &mut Vec<InputEvent>) {
+        match action {
+            CommandAction::StopMacros => self.stop_all_macros(output),
+        }
+    }
+
+    fn stop_all_macros(&mut self, output: &mut Vec<InputEvent>) {
+        self.macro_queue.clear();
+        self.pressed_macro_sources.clear();
+        self.held_macro_releases.clear();
+
+        let mapped_key_targets = self
+            .pressed_key_targets
+            .values()
+            .copied()
+            .collect::<HashSet<_>>();
+        for key in self.macro_output_keys.drain() {
+            if !mapped_key_targets.contains(&key) {
+                push_input_event(output, key, 0);
+            }
+        }
+        for (axis, value) in self.macro_output_axes.drain() {
+            if value != 0 {
+                push_input_event(output, axis, 0);
+            }
+        }
+    }
+
     fn queue_macro_event(&mut self, scheduled: ScheduledMacroEvent) {
         let index = self
             .macro_queue
@@ -437,7 +485,27 @@ impl RemapRuntime {
             } else {
                 scheduled.value
             };
+            self.record_macro_output(scheduled.event, value);
             push_input_event(output, scheduled.event, value);
+        }
+    }
+
+    fn record_macro_output(&mut self, event: EventCode, value: i32) {
+        match event.kind {
+            EventKind::Key => {
+                if value == 0 {
+                    self.macro_output_keys.remove(&event);
+                } else {
+                    self.macro_output_keys.insert(event);
+                }
+            }
+            EventKind::Absolute => {
+                if value == 0 {
+                    self.macro_output_axes.remove(&event);
+                } else {
+                    self.macro_output_axes.insert(event, value);
+                }
+            }
         }
     }
 
@@ -468,6 +536,7 @@ impl RemapRuntime {
                     .as_ref()
                     .map(|turbo| Duration::from_millis(turbo.interval_ms)),
                 macro_settings: mapping.macro_settings.clone(),
+                command: mapping.command.clone(),
             })
             .unwrap_or(ResolvedMapping {
                 action: MappingAction::Map,
@@ -475,6 +544,7 @@ impl RemapRuntime {
                 mapped: false,
                 turbo_interval: None,
                 macro_settings: None,
+                command: None,
             })
     }
 
