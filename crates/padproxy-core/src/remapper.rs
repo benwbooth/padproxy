@@ -1,6 +1,6 @@
 use crate::event_code::{event_from_input, virtual_xbox_supports, EventCode, EventKind};
 use crate::outputs::{output_device, supported_output_ids};
-use crate::profiles::{LayerActivation, LayerActivationMode, Profile};
+use crate::profiles::{LayerActivation, LayerActivationMode, Mapping, MappingAction, Profile};
 use anyhow::{anyhow, Context, Result};
 use evdev::uinput::VirtualDevice;
 use evdev::{
@@ -10,7 +10,8 @@ use evdev::{
 use std::collections::{HashMap, HashSet};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::{thread, time::Duration};
+use std::thread;
+use std::time::{Duration, Instant};
 
 pub struct LaunchOptions {
     pub profile: Profile,
@@ -36,12 +37,28 @@ pub struct RemapRuntime {
     toggled_layers: HashSet<usize>,
     pressed_activators: HashSet<(usize, EventCode)>,
     pressed_key_targets: HashMap<EventCode, EventCode>,
+    turbo_states: HashMap<EventCode, TurboState>,
     virtual_nodes: Vec<String>,
 }
 
 struct RuntimeLayer {
     activation: Option<LayerActivation>,
-    mappings: HashMap<EventCode, EventCode>,
+    mappings: HashMap<EventCode, Mapping>,
+}
+
+#[derive(Clone, Copy)]
+struct ResolvedMapping {
+    action: MappingAction,
+    target: EventCode,
+    mapped: bool,
+    turbo_interval: Option<Duration>,
+}
+
+struct TurboState {
+    target: EventCode,
+    interval: Duration,
+    next_toggle: Instant,
+    output_down: bool,
 }
 
 pub fn launch_with_remap(options: LaunchOptions) -> Result<i32> {
@@ -128,7 +145,7 @@ impl RemapRuntime {
             .iter()
             .map(|layer| RuntimeLayer {
                 activation: layer.activation.clone(),
-                mappings: layer.mapping_table(),
+                mappings: layer.mapping_behavior_table(),
             })
             .collect();
 
@@ -141,6 +158,7 @@ impl RemapRuntime {
             toggled_layers: HashSet::new(),
             pressed_activators: HashSet::new(),
             pressed_key_targets: HashMap::new(),
+            turbo_states: HashMap::new(),
             virtual_nodes,
         })
     }
@@ -150,11 +168,15 @@ impl RemapRuntime {
     }
 
     pub fn pump_once(&mut self) -> Result<()> {
+        let had_events;
         let events = match self.source.fetch_events() {
-            Ok(events) => events.collect::<Vec<_>>(),
+            Ok(events) => {
+                had_events = true;
+                events.collect::<Vec<_>>()
+            }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                thread::sleep(Duration::from_millis(5));
-                return Ok(());
+                had_events = false;
+                Vec::new()
             }
             Err(error) => return Err(error).context("failed reading source events"),
         };
@@ -173,19 +195,15 @@ impl RemapRuntime {
                 continue;
             }
 
-            let Some(target_event) = self.resolve_target_event(source_event, event.value()) else {
-                continue;
-            };
-
-            output.push(InputEvent::new(
-                target_event.event_type().0,
-                target_event.code,
-                event.value(),
-            ));
+            self.push_mapped_event(source_event, event.value(), &mut output);
         }
+
+        self.push_due_turbo_events(&mut output);
 
         if !output.is_empty() {
             self.virtual_pad.emit(&output)?;
+        } else if !had_events {
+            thread::sleep(Duration::from_millis(5));
         }
 
         Ok(())
@@ -224,41 +242,125 @@ impl RemapRuntime {
         consumed
     }
 
-    fn resolve_target_event(&mut self, source_event: EventCode, value: i32) -> Option<EventCode> {
+    fn push_mapped_event(
+        &mut self,
+        source_event: EventCode,
+        value: i32,
+        output: &mut Vec<InputEvent>,
+    ) {
         if source_event.kind == EventKind::Key {
-            if value == 0 {
-                let target_event = self
-                    .pressed_key_targets
-                    .remove(&source_event)
-                    .unwrap_or_else(|| self.mapped_event(source_event).0);
-                return virtual_xbox_supports(target_event).then_some(target_event);
-            }
-
-            if let Some(target_event) = self.pressed_key_targets.get(&source_event).copied() {
-                return virtual_xbox_supports(target_event).then_some(target_event);
-            }
+            self.push_mapped_key_event(source_event, value, output);
+        } else {
+            self.push_mapped_absolute_event(source_event, value, output);
         }
-
-        let (target_event, mapped) = self.mapped_event(source_event);
-        if (!self.profile.passthrough && !mapped) || !virtual_xbox_supports(target_event) {
-            return None;
-        }
-
-        if source_event.kind == EventKind::Key {
-            self.pressed_key_targets.insert(source_event, target_event);
-        }
-
-        Some(target_event)
     }
 
-    fn mapped_event(&self, source_event: EventCode) -> (EventCode, bool) {
+    fn push_mapped_key_event(
+        &mut self,
+        source_event: EventCode,
+        value: i32,
+        output: &mut Vec<InputEvent>,
+    ) {
+        if value == 0 {
+            let Some(target_event) = self.pressed_key_targets.remove(&source_event) else {
+                let resolved = self.resolved_mapping(source_event);
+                if resolved.action == MappingAction::Map
+                    && (self.profile.passthrough || resolved.mapped)
+                    && virtual_xbox_supports(resolved.target)
+                {
+                    push_input_event(output, resolved.target, 0);
+                }
+                return;
+            };
+
+            if let Some(turbo) = self.turbo_states.remove(&source_event) {
+                if turbo.output_down {
+                    push_input_event(output, target_event, 0);
+                }
+            } else {
+                push_input_event(output, target_event, 0);
+            }
+            return;
+        }
+
+        if self.pressed_key_targets.contains_key(&source_event) {
+            return;
+        }
+
+        let resolved = self.resolved_mapping(source_event);
+        if resolved.action == MappingAction::Disable
+            || (!self.profile.passthrough && !resolved.mapped)
+            || !virtual_xbox_supports(resolved.target)
+        {
+            return;
+        }
+
+        self.pressed_key_targets
+            .insert(source_event, resolved.target);
+        push_input_event(output, resolved.target, 1);
+
+        if let Some(interval) = resolved.turbo_interval {
+            self.turbo_states.insert(
+                source_event,
+                TurboState {
+                    target: resolved.target,
+                    interval,
+                    next_toggle: Instant::now() + interval,
+                    output_down: true,
+                },
+            );
+        }
+    }
+
+    fn push_mapped_absolute_event(
+        &self,
+        source_event: EventCode,
+        value: i32,
+        output: &mut Vec<InputEvent>,
+    ) {
+        let resolved = self.resolved_mapping(source_event);
+        if resolved.action == MappingAction::Disable
+            || (!self.profile.passthrough && !resolved.mapped)
+            || !virtual_xbox_supports(resolved.target)
+        {
+            return;
+        }
+        push_input_event(output, resolved.target, value);
+    }
+
+    fn push_due_turbo_events(&mut self, output: &mut Vec<InputEvent>) {
+        let now = Instant::now();
+        for state in self.turbo_states.values_mut() {
+            if now < state.next_toggle {
+                continue;
+            }
+
+            state.output_down = !state.output_down;
+            state.next_toggle = now + state.interval;
+            push_input_event(output, state.target, if state.output_down { 1 } else { 0 });
+        }
+    }
+
+    fn resolved_mapping(&self, source_event: EventCode) -> ResolvedMapping {
         let layer = &self.layers[self.active_layer_index()];
         layer
             .mappings
             .get(&source_event)
-            .copied()
-            .map(|target| (target, true))
-            .unwrap_or((source_event, false))
+            .map(|mapping| ResolvedMapping {
+                action: mapping.action,
+                target: mapping.to,
+                mapped: true,
+                turbo_interval: mapping
+                    .turbo
+                    .as_ref()
+                    .map(|turbo| Duration::from_millis(turbo.interval_ms)),
+            })
+            .unwrap_or(ResolvedMapping {
+                action: MappingAction::Map,
+                target: source_event,
+                mapped: false,
+                turbo_interval: None,
+            })
     }
 
     fn active_layer_index(&self) -> usize {
@@ -269,6 +371,10 @@ impl RemapRuntime {
         }
         0
     }
+}
+
+fn push_input_event(output: &mut Vec<InputEvent>, event: EventCode, value: i32) {
+    output.push(InputEvent::new(event.event_type().0, event.code, value));
 }
 
 fn create_virtual_xbox_pad() -> Result<VirtualDevice> {

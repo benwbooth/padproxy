@@ -41,7 +41,7 @@ Source pages consulted:
 
 ## Mapping Types
 
-- Controller to controller mappings.
+- Controller to controller mappings. Basic button/axis remap done.
 - Controller to keyboard mappings.
 - Controller to mouse mappings.
 - Keyboard to controller mappings.
@@ -49,7 +49,7 @@ Source pages consulted:
 - Native/hardware mappings that do not create an emulated device.
 - Virtual mappings that emit through a virtual device.
 - Mute physical input while virtual output is active.
-- Disable a source button entirely.
+- Disable a source button entirely. Done for controller inputs.
 - Commands, such as turn remap off.
 - Launch app / run command mappings.
 
@@ -63,7 +63,7 @@ Source pages consulted:
 - Release press.
 - Hold until release.
 - Toggle.
-- Turbo / rapid fire.
+- Turbo / rapid fire. Done for held controller button remaps.
 - Custom activator delays and timings.
 
 ## Combos / Macros
@@ -182,6 +182,6 @@ Source pages consulted:
 3. Add hook mode to pick source and target controls by pressing buttons. Done.
 4. Add remap ON/OFF/apply lifecycle from the GUI. Done.
 5. Add virtual output type selection and hide/grab policy controls. Done for implemented outputs; planned outputs are visible but disabled until their virtual-device backends exist.
-6. Add layers, then activators, then macros. Basic main/shift layers are done with hold/toggle activation; richer activators and macros remain.
+6. Add layers, then activators, then macros. Basic main/shift layers are done with hold/toggle activation, disable mappings, and held-button turbo; richer activators and macros remain.
 7. Add analog tuning.
 8. Add process autodetect and Lunchbox integration.

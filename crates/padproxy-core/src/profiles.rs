@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 pub const MAIN_LAYER_ID: &str = "main";
 pub const MAX_SHIFT_LAYERS: usize = 10;
+pub const DEFAULT_TURBO_INTERVAL_MS: u64 = 75;
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct DeviceMatch {
@@ -29,6 +30,20 @@ pub struct Mapping {
     pub to: EventCode,
     pub from_name: String,
     pub to_name: String,
+    pub action: MappingAction,
+    pub turbo: Option<TurboSettings>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MappingAction {
+    Map,
+    Disable,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct TurboSettings {
+    pub interval_ms: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -92,7 +107,25 @@ enum RawOutput {
 #[derive(Debug, Deserialize)]
 struct RawMapping {
     from: String,
-    to: String,
+    to: Option<String>,
+    action: Option<String>,
+    r#type: Option<String>,
+    turbo: Option<RawTurbo>,
+    turbo_interval_ms: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum RawTurbo {
+    Enabled(bool),
+    Object(RawTurboObject),
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawTurboObject {
+    enabled: Option<bool>,
+    interval_ms: Option<u64>,
+    rate_hz: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -252,7 +285,15 @@ impl Layer {
     pub fn mapping_table(&self) -> HashMap<EventCode, EventCode> {
         self.mappings
             .iter()
+            .filter(|mapping| mapping.action == MappingAction::Map)
             .map(|mapping| (mapping.from, mapping.to))
+            .collect()
+    }
+
+    pub fn mapping_behavior_table(&self) -> HashMap<EventCode, Mapping> {
+        self.mappings
+            .iter()
+            .map(|mapping| (mapping.from, mapping.clone()))
             .collect()
     }
 }
@@ -425,22 +466,114 @@ fn parse_mappings(mappings: Option<Vec<RawMapping>>, context: &str) -> Result<Ve
     for mapping in mappings.unwrap_or_default() {
         let from = parse_event_code(&mapping.from)
             .ok_or_else(|| anyhow!("unknown source event {} in {context}", mapping.from))?;
-        let to = parse_event_code(&mapping.to)
-            .ok_or_else(|| anyhow!("unknown target event {} in {context}", mapping.to))?;
-        if !virtual_xbox_supports(to) {
-            return Err(anyhow!(
-                "target event {} in {context} is not supported by the current virtual pad",
-                mapping.to
-            ));
+        let action = parse_mapping_action(mapping.action.as_deref().or(mapping.r#type.as_deref()))?;
+        let to_value = mapping.to.as_deref();
+        let action = match (action, to_value.map(normalize_mapping_keyword)) {
+            (_, Some(keyword)) if matches!(keyword.as_str(), "disable" | "disabled" | "none") => {
+                MappingAction::Disable
+            }
+            (action, _) => action,
+        };
+
+        let to = match action {
+            MappingAction::Map => {
+                let to = to_value.ok_or_else(|| {
+                    anyhow!("mapping from {} in {context} requires to", mapping.from)
+                })?;
+                let to = parse_event_code(to)
+                    .ok_or_else(|| anyhow!("unknown target event {to} in {context}"))?;
+                if !virtual_xbox_supports(to) {
+                    return Err(anyhow!(
+                        "target event {} in {context} is not supported by the current virtual pad",
+                        to.name()
+                    ));
+                }
+                to
+            }
+            MappingAction::Disable => from,
+        };
+
+        let turbo = parse_turbo(mapping.turbo, mapping.turbo_interval_ms)?;
+        if turbo.is_some() {
+            if action != MappingAction::Map {
+                return Err(anyhow!(
+                    "disabled mapping from {} in {context} cannot use turbo",
+                    mapping.from
+                ));
+            }
+            if from.kind != crate::event_code::EventKind::Key
+                || to.kind != crate::event_code::EventKind::Key
+            {
+                return Err(anyhow!(
+                    "turbo mapping from {} in {context} requires button source and target",
+                    mapping.from
+                ));
+            }
         }
         parsed.push(Mapping {
             from,
             to,
             from_name: from.name(),
             to_name: to.name(),
+            action,
+            turbo,
         });
     }
     Ok(parsed)
+}
+
+fn parse_mapping_action(value: Option<&str>) -> Result<MappingAction> {
+    let Some(value) = value else {
+        return Ok(MappingAction::Map);
+    };
+
+    match normalize_mapping_keyword(value).as_str() {
+        "map" | "remap" | "virtual" | "controller" => Ok(MappingAction::Map),
+        "disable" | "disabled" | "mute" | "block" | "none" => Ok(MappingAction::Disable),
+        other => Err(anyhow!("unknown mapping action {other}")),
+    }
+}
+
+fn parse_turbo(
+    raw: Option<RawTurbo>,
+    turbo_interval_ms: Option<u64>,
+) -> Result<Option<TurboSettings>> {
+    let (enabled, interval_ms) = match raw {
+        Some(RawTurbo::Enabled(value)) => (
+            value,
+            turbo_interval_ms.unwrap_or(DEFAULT_TURBO_INTERVAL_MS),
+        ),
+        Some(RawTurbo::Object(object)) => {
+            let mut interval_ms = turbo_interval_ms.unwrap_or(DEFAULT_TURBO_INTERVAL_MS);
+            if let Some(value) = object.interval_ms {
+                interval_ms = value;
+            }
+            if let Some(rate_hz) = object.rate_hz {
+                if !(rate_hz.is_finite() && rate_hz > 0.0) {
+                    return Err(anyhow!("turbo rate_hz must be positive"));
+                }
+                interval_ms = (1000.0 / (rate_hz * 2.0)).round() as u64;
+            }
+            (object.enabled.unwrap_or(true), interval_ms)
+        }
+        None => (
+            turbo_interval_ms.is_some(),
+            turbo_interval_ms.unwrap_or(DEFAULT_TURBO_INTERVAL_MS),
+        ),
+    };
+
+    if !enabled {
+        return Ok(None);
+    }
+    if !(10..=5000).contains(&interval_ms) {
+        return Err(anyhow!("turbo interval_ms must be between 10 and 5000"));
+    }
+
+    Ok(Some(TurboSettings { interval_ms }))
+}
+
+fn normalize_mapping_keyword(value: &str) -> String {
+    value.trim().to_ascii_lowercase().replace([' ', '-'], "_")
 }
 
 fn parse_layer_activation(raw: RawLayerActivation, layer_id: &str) -> Result<LayerActivation> {
@@ -518,7 +651,10 @@ fn normalize_layer_id(value: &str) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_profile_bytes, LayerActivationMode, MAIN_LAYER_ID, MAX_SHIFT_LAYERS};
+    use super::{
+        parse_profile_bytes, LayerActivationMode, MappingAction, DEFAULT_TURBO_INTERVAL_MS,
+        MAIN_LAYER_ID, MAX_SHIFT_LAYERS,
+    };
     use std::path::Path;
 
     #[test]
@@ -538,6 +674,8 @@ mappings:
         assert_eq!(profile.layers[0].id, MAIN_LAYER_ID);
         assert_eq!(profile.mappings.len(), 1);
         assert_eq!(profile.mapping_table().len(), 1);
+        assert_eq!(profile.mappings[0].action, MappingAction::Map);
+        assert!(profile.mappings[0].turbo.is_none());
     }
 
     #[test]
@@ -597,5 +735,72 @@ layers:
             .unwrap_err()
             .to_string();
         assert!(error.contains("shift layers"), "{error}");
+    }
+
+    #[test]
+    fn parses_disabled_and_turbo_mappings() {
+        let profile = parse_profile_bytes(
+            br#"
+id: behavior
+mappings:
+  - from: btn:select
+    action: disable
+  - from: btn:south
+    to: btn:east
+    turbo: true
+  - from: btn:west
+    to: btn:north
+    turbo:
+      interval_ms: 120
+"#,
+            Path::new("behavior.yaml"),
+        )
+        .unwrap();
+
+        assert_eq!(profile.mappings[0].action, MappingAction::Disable);
+        assert_eq!(profile.mappings[0].to_name, "btn:select");
+        assert_eq!(profile.mapping_table().len(), 2);
+        assert_eq!(
+            profile.mappings[1].turbo.as_ref().unwrap().interval_ms,
+            DEFAULT_TURBO_INTERVAL_MS
+        );
+        assert_eq!(profile.mappings[2].turbo.as_ref().unwrap().interval_ms, 120);
+    }
+
+    #[test]
+    fn rejects_turbo_for_disabled_or_axis_mappings() {
+        let disabled_error = parse_profile_bytes(
+            br#"
+id: disabled-turbo
+mappings:
+  - from: btn:south
+    action: disable
+    turbo: true
+"#,
+            Path::new("disabled-turbo.yaml"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            disabled_error.contains("cannot use turbo"),
+            "{disabled_error}"
+        );
+
+        let axis_error = parse_profile_bytes(
+            br#"
+id: axis-turbo
+mappings:
+  - from: abs:x
+    to: abs:y
+    turbo: true
+"#,
+            Path::new("axis-turbo.yaml"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            axis_error.contains("button source and target"),
+            "{axis_error}"
+        );
     }
 }

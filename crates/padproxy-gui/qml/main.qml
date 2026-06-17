@@ -61,6 +61,10 @@ ApplicationWindow {
         { label: "Hold", mode: "hold" },
         { label: "Toggle", mode: "toggle" }
     ]
+    property var mappingActionOptions: [
+        { label: "Map", action: "map" },
+        { label: "Disable", action: "disable" }
+    ]
     property var eventCodes: [
         "btn:south",
         "btn:east",
@@ -253,6 +257,27 @@ ApplicationWindow {
         return root.activationModeOptions[index] ? root.activationModeOptions[index].mode : "hold"
     }
 
+    function mappingActionIndex(action) {
+        const normalized = action || "map"
+        for (let i = 0; i < root.mappingActionOptions.length; i++) {
+            if (root.mappingActionOptions[i].action === normalized)
+                return i
+        }
+        return 0
+    }
+
+    function mappingActionAt(index) {
+        const option = root.mappingActionOptions[index]
+        return option ? option.action : "map"
+    }
+
+    function normalizedTurboInterval(value) {
+        const number = Number(value)
+        if (!Number.isFinite(number))
+            return 75
+        return Math.max(10, Math.min(5000, Math.round(number)))
+    }
+
     function sanitizeLayerId(value, fallback) {
         const normalized = String(value || fallback || "shift_1")
             .trim()
@@ -266,7 +291,13 @@ ApplicationWindow {
         const rows = []
         for (let i = 0; i < mappingsModel.count; i++) {
             const row = mappingsModel.get(i)
-            rows.push({ fromCode: row.fromCode, toCode: row.toCode })
+            rows.push({
+                fromCode: row.fromCode,
+                toCode: row.toCode,
+                action: row.action || "map",
+                turboEnabled: row.turboEnabled === true,
+                turboIntervalMs: root.normalizedTurboInterval(row.turboIntervalMs)
+            })
         }
         return rows
     }
@@ -274,9 +305,13 @@ ApplicationWindow {
     function mappingRowsFromProfile(mappings) {
         const rows = []
         for (let i = 0; mappings && i < mappings.length; i++) {
+            const turbo = mappings[i].turbo || null
             rows.push({
                 fromCode: mappings[i].from_name || mappings[i].from || "btn:south",
-                toCode: mappings[i].to_name || mappings[i].to || "btn:south"
+                toCode: mappings[i].to_name || mappings[i].to || "btn:south",
+                action: mappings[i].action || "map",
+                turboEnabled: turbo !== null,
+                turboIntervalMs: turbo && turbo.interval_ms ? turbo.interval_ms : 75
             })
         }
         return rows
@@ -287,7 +322,10 @@ ApplicationWindow {
         for (let i = 0; rows && i < rows.length; i++) {
             mappingsModel.append({
                 fromCode: rows[i].fromCode || "btn:south",
-                toCode: rows[i].toCode || "btn:south"
+                toCode: rows[i].toCode || "btn:south",
+                action: rows[i].action || "map",
+                turboEnabled: rows[i].turboEnabled === true,
+                turboIntervalMs: root.normalizedTurboInterval(rows[i].turboIntervalMs)
             })
         }
         root.selectedMappingIndex = mappingsModel.count > 0 ? 0 : -1
@@ -303,7 +341,13 @@ ApplicationWindow {
         })
         const mappings = []
         for (let i = 0; rows && i < rows.length; i++)
-            mappings.push({ fromCode: rows[i].fromCode, toCode: rows[i].toCode })
+            mappings.push({
+                fromCode: rows[i].fromCode,
+                toCode: rows[i].toCode,
+                action: rows[i].action || "map",
+                turboEnabled: rows[i].turboEnabled === true,
+                turboIntervalMs: root.normalizedTurboInterval(rows[i].turboIntervalMs)
+            })
         root.layerMappings.push(mappings)
     }
 
@@ -457,7 +501,13 @@ ApplicationWindow {
     }
 
     function addMapping(fromCode, toCode) {
-        mappingsModel.append({ fromCode: fromCode, toCode: toCode })
+        mappingsModel.append({
+            fromCode: fromCode,
+            toCode: toCode,
+            action: "map",
+            turboEnabled: false,
+            turboIntervalMs: 75
+        })
         root.selectedMappingIndex = mappingsModel.count - 1
     }
 
@@ -494,6 +544,8 @@ ApplicationWindow {
         const row = root.selectedMapping()
         if (!row)
             return false
+        if (root.selectedMappingSide === "to" && row.action === "disable")
+            return false
         return root.selectedMappingSide === "to" ? row.toCode === code : row.fromCode === code
     }
 
@@ -501,7 +553,10 @@ ApplicationWindow {
         let total = 0
         const propertyName = side === "to" ? "toCode" : "fromCode"
         for (let i = 0; i < mappingsModel.count; i++) {
-            if (mappingsModel.get(i)[propertyName] === code)
+            const row = mappingsModel.get(i)
+            if (side === "to" && row.action === "disable")
+                continue
+            if (row[propertyName] === code)
                 total += 1
         }
         return total
@@ -566,6 +621,22 @@ ApplicationWindow {
         return "\"" + String(value).replace(/\\/g, "\\\\").replace(/"/g, "\\\"") + "\""
     }
 
+    function mappingYaml(indent, row) {
+        const action = row.action || "map"
+        let text = ""
+        text += indent + "- from: " + row.fromCode + "\n"
+        if (action === "disable") {
+            text += indent + "  action: disable\n"
+        } else {
+            text += indent + "  to: " + row.toCode + "\n"
+            if (row.turboEnabled === true) {
+                text += indent + "  turbo:\n"
+                text += indent + "    interval_ms: " + root.normalizedTurboInterval(row.turboIntervalMs) + "\n"
+            }
+        }
+        return text
+    }
+
     function structuredProfileYaml() {
         root.syncCurrentLayerMetadata()
         root.syncCurrentLayerMappings()
@@ -586,8 +657,7 @@ ApplicationWindow {
             } else {
                 text += "mappings:\n"
                 for (let i = 0; i < rows.length; i++) {
-                    text += "  - from: " + rows[i].fromCode + "\n"
-                    text += "    to: " + rows[i].toCode + "\n"
+                    text += root.mappingYaml("  ", rows[i])
                 }
             }
         } else {
@@ -608,8 +678,7 @@ ApplicationWindow {
                 } else {
                     text += "    mappings:\n"
                     for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
-                        text += "      - from: " + rows[rowIndex].fromCode + "\n"
-                        text += "        to: " + rows[rowIndex].toCode + "\n"
+                        text += root.mappingYaml("      ", rows[rowIndex])
                     }
                 }
             }
@@ -1165,12 +1234,17 @@ ApplicationWindow {
                                     }
 
                                     Label {
-                                        text: root.selectedMapping()
-                                            ? "Row " + (root.selectedMappingIndex + 1) + ": "
-                                                + root.eventLabel(root.selectedMapping().fromCode)
-                                                + " -> "
-                                                + root.eventLabel(root.selectedMapping().toCode)
-                                            : "No mapping row"
+                                        text: (function() {
+                                            const row = root.selectedMapping()
+                                            if (!row)
+                                                return "No mapping row"
+                                            const prefix = "Row " + (root.selectedMappingIndex + 1) + ": "
+                                                + root.eventLabel(row.fromCode)
+                                            if (row.action === "disable")
+                                                return prefix + " disabled"
+                                            return prefix + " -> " + root.eventLabel(row.toCode)
+                                                + (row.turboEnabled === true ? " turbo" : "")
+                                        })()
                                         elide: Text.ElideRight
                                         Layout.fillWidth: true
                                     }
@@ -1186,7 +1260,7 @@ ApplicationWindow {
 
                             Frame {
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: Math.max(220, mappingsModel.count * 48 + 20)
+                                Layout.preferredHeight: Math.max(240, mappingsModel.count * 64 + 20)
 
                                 ListView {
                                     id: mappingsList
@@ -1198,7 +1272,7 @@ ApplicationWindow {
 
                                     delegate: Rectangle {
                                         width: ListView.view.width
-                                        height: 44
+                                        height: 60
                                         color: index === root.selectedMappingIndex ? "#263241" : "transparent"
                                         border.color: index === root.selectedMappingIndex ? "#ffd84d" : "transparent"
                                         radius: 4
@@ -1232,8 +1306,26 @@ ApplicationWindow {
                                                 ToolTip.text: root.eventLabel(currentText)
                                             }
 
+                                            ComboBox {
+                                                model: root.mappingActionOptions
+                                                textRole: "label"
+                                                currentIndex: root.mappingActionIndex(action)
+                                                Layout.preferredWidth: 112
+                                                onPressedChanged: {
+                                                    if (pressed)
+                                                        root.selectedMappingIndex = index
+                                                }
+                                                onActivated: function(actionIndex) {
+                                                    root.selectedMappingIndex = index
+                                                    const nextAction = root.mappingActionAt(actionIndex)
+                                                    mappingsModel.setProperty(index, "action", nextAction)
+                                                    if (nextAction === "disable")
+                                                        mappingsModel.setProperty(index, "turboEnabled", false)
+                                                }
+                                            }
+
                                             Label {
-                                                text: "to"
+                                                text: action === "disable" ? "" : "to"
                                                 horizontalAlignment: Text.AlignHCenter
                                                 Layout.preferredWidth: 24
                                             }
@@ -1242,6 +1334,8 @@ ApplicationWindow {
                                                 model: root.eventCodes
                                                 currentIndex: Math.max(0, root.eventCodes.indexOf(toCode))
                                                 Layout.fillWidth: true
+                                                enabled: action !== "disable"
+                                                opacity: enabled ? 1.0 : 0.35
                                                 onPressedChanged: {
                                                     if (pressed) {
                                                         root.selectedMappingIndex = index
@@ -1255,6 +1349,32 @@ ApplicationWindow {
                                                 }
                                                 ToolTip.visible: hovered
                                                 ToolTip.text: root.eventLabel(currentText)
+                                            }
+
+                                            CheckBox {
+                                                text: "Turbo"
+                                                enabled: action !== "disable"
+                                                checked: turboEnabled === true
+                                                Layout.preferredWidth: 78
+                                                onToggled: {
+                                                    root.selectedMappingIndex = index
+                                                    mappingsModel.setProperty(index, "turboEnabled", checked)
+                                                }
+                                            }
+
+                                            SpinBox {
+                                                from: 10
+                                                to: 5000
+                                                stepSize: 5
+                                                editable: true
+                                                value: root.normalizedTurboInterval(turboIntervalMs)
+                                                enabled: action !== "disable" && turboEnabled === true
+                                                visible: enabled
+                                                Layout.preferredWidth: 88
+                                                onValueModified: {
+                                                    root.selectedMappingIndex = index
+                                                    mappingsModel.setProperty(index, "turboIntervalMs", value)
+                                                }
                                             }
 
                                             Button {
