@@ -5,7 +5,7 @@ import com.benwbooth.padproxy
 
 ApplicationWindow {
     id: root
-    width: 1120
+    width: 1320
     height: 720
     visible: true
     title: "PadProxy"
@@ -36,6 +36,35 @@ ApplicationWindow {
     property var selectedProfile: profilesModel.length > 0 && profileList.currentIndex >= 0
         ? profilesModel[profileList.currentIndex]
         : null
+    property bool editorDirty: false
+
+    onProfilesModelChanged: Qt.callLater(function() {
+        if (root.profilesModel.length > 0 && backend.profile_yaml.length === 0)
+            root.selectProfile(profileList.currentIndex >= 0 ? profileList.currentIndex : 0)
+    })
+
+    function hexId(value) {
+        return Number(value).toString(16).padStart(4, "0")
+    }
+
+    function capabilitiesText(values) {
+        return values && values.length > 0 ? values.join(", ") : "no mapped capabilities"
+    }
+
+    function selectProfile(index) {
+        profileList.currentIndex = index
+        if (root.selectedProfile)
+            backend.edit_profile(root.selectedProfile.source_path)
+    }
+
+    Connections {
+        target: backend
+
+        function onProfile_yamlChanged() {
+            profileEditor.text = backend.profile_yaml
+            root.editorDirty = false
+        }
+    }
 
     header: ToolBar {
         RowLayout {
@@ -88,13 +117,11 @@ ApplicationWindow {
 
                     delegate: ItemDelegate {
                         width: ListView.view.width
-                        text: modelData.name + "\n" + modelData.path + "  " + hexId(modelData.vendor) + ":" + hexId(modelData.product)
+                        text: "[" + modelData.device_kind + "] " + modelData.name
+                            + "\n" + modelData.path + "  " + hexId(modelData.vendor) + ":" + hexId(modelData.product)
+                            + "\n" + capabilitiesText(modelData.capabilities)
                         highlighted: ListView.isCurrentItem
                         onClicked: deviceList.currentIndex = index
-
-                        function hexId(value) {
-                            return Number(value).toString(16).padStart(4, "0")
-                        }
                     }
                 }
             }
@@ -113,6 +140,24 @@ ApplicationWindow {
                     font.bold: true
                 }
 
+                RowLayout {
+                    Layout.fillWidth: true
+
+                    Button {
+                        text: "New"
+                        onClicked: {
+                            profileList.currentIndex = -1
+                            backend.new_profile()
+                        }
+                    }
+
+                    Button {
+                        text: "Edit"
+                        enabled: root.selectedProfile !== null
+                        onClicked: backend.edit_profile(root.selectedProfile.source_path)
+                    }
+                }
+
                 ListView {
                     id: profileList
                     Layout.fillWidth: true
@@ -122,9 +167,9 @@ ApplicationWindow {
 
                     delegate: ItemDelegate {
                         width: ListView.view.width
-                        text: modelData.name + "\n" + modelData.output_type
+                        text: modelData.name + "\n" + modelData.output_type + "  " + modelData.source_path
                         highlighted: ListView.isCurrentItem
-                        onClicked: profileList.currentIndex = index
+                        onClicked: root.selectProfile(index)
                     }
                 }
             }
@@ -132,51 +177,52 @@ ApplicationWindow {
 
         Pane {
             SplitView.fillWidth: true
+            SplitView.minimumWidth: 420
 
             ColumnLayout {
                 anchors.fill: parent
                 spacing: 10
 
-                Label {
-                    text: selectedProfile ? selectedProfile.name : "Mappings"
-                    font.bold: true
+                RowLayout {
+                    Layout.fillWidth: true
+
+                    Label {
+                        text: selectedProfile ? selectedProfile.name : "Profile Editor"
+                        font.bold: true
+                        elide: Text.ElideRight
+                        Layout.fillWidth: true
+                    }
+
+                    Button {
+                        text: "Save"
+                        enabled: profileEditor.text.length > 0
+                        onClicked: backend.save_profile(profileEditor.text)
+                    }
                 }
 
                 Label {
-                    text: selectedProfile ? selectedProfile.description : ""
-                    wrapMode: Text.WordWrap
+                    text: backend.editing_profile_path.length > 0
+                        ? backend.editing_profile_path
+                        : "No profile loaded."
+                    elide: Text.ElideMiddle
                     Layout.fillWidth: true
                 }
 
-                Frame {
+                TextArea {
+                    id: profileEditor
                     Layout.fillWidth: true
                     Layout.fillHeight: true
+                    text: backend.profile_yaml
+                    font.family: "monospace"
+                    wrapMode: TextEdit.NoWrap
+                    selectByMouse: true
+                    persistentSelection: true
+                    onTextChanged: root.editorDirty = text !== backend.profile_yaml
 
-                    ListView {
-                        anchors.fill: parent
-                        clip: true
-                        model: selectedProfile ? selectedProfile.mappings : []
-
-                        delegate: RowLayout {
-                            width: ListView.view.width
-                            height: 36
-
-                            Label {
-                                text: modelData.from_name
-                                Layout.fillWidth: true
-                            }
-
-                            Label {
-                                text: "->"
-                                horizontalAlignment: Text.AlignHCenter
-                                Layout.preferredWidth: 36
-                            }
-
-                            Label {
-                                text: modelData.to_name
-                                Layout.fillWidth: true
-                            }
-                        }
+                    background: Rectangle {
+                        color: "#1f2328"
+                        border.color: profileEditor.activeFocus ? "#d6b44c" : "#3a3f44"
+                        radius: 4
                     }
                 }
             }

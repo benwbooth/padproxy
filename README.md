@@ -78,6 +78,11 @@ Profiles are loaded from:
 - `~/.config/padproxy/profiles.d`
 - `/etc/padproxy/profiles.d`
 
+The Qt UI can create and edit profiles from the Profiles pane. `New` starts a
+YAML profile template, `Edit` loads the selected profile YAML, and `Save` writes
+the result to `~/.config/padproxy/profiles.d`. Packaged profiles are read-only;
+saving one creates a user copy with the same profile id.
+
 Example:
 
 ```yaml

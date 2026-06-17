@@ -32,8 +32,9 @@ fn main() -> Result<()> {
         Command::ListDevices => {
             for device in list_devices()? {
                 println!(
-                    "{}\t{}\t{}\tid={}",
+                    "{}\t{}\t{}\t{}\tid={}",
                     device.path,
+                    device.device_kind,
                     device.hardware_id(),
                     device.name,
                     device.id

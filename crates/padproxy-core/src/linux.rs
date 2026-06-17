@@ -1,18 +1,20 @@
 use crate::devices::DeviceInfo;
 use anyhow::Result;
 use evdev::{enumerate, AbsoluteAxisCode, Device, EventType, KeyCode};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub fn list_devices() -> Result<Vec<DeviceInfo>> {
     let mut devices = Vec::new();
 
     for (path, device) in enumerate() {
-        if !looks_like_controller(&device) {
+        let input_id = device.input_id();
+        let name = device.name().unwrap_or("Unknown input device").to_string();
+        let device_kind = device_kind(&path, &device);
+
+        if !should_show_device(&path, &device, &name, &device_kind) {
             continue;
         }
 
-        let input_id = device.input_id();
-        let name = device.name().unwrap_or("Unknown controller").to_string();
         let phys = device.physical_path().unwrap_or("").to_string();
         let uniq = device.unique_name().unwrap_or("").to_string();
         let vendor = input_id.vendor();
@@ -27,6 +29,7 @@ pub fn list_devices() -> Result<Vec<DeviceInfo>> {
             id,
             name,
             path: path.to_string_lossy().to_string(),
+            device_kind,
             phys,
             uniq,
             bus: input_id.bus_type().0,
@@ -52,6 +55,12 @@ pub fn resolve_device(selector: &str) -> Result<String> {
         .ok_or_else(|| anyhow::anyhow!("no controller matched {selector}"))
 }
 
+fn should_show_device(path: &Path, device: &Device, name: &str, device_kind: &str) -> bool {
+    name_has_controller_hint(name)
+        || has_joystick_devlink(path)
+        || (device_kind == "virtual" && looks_like_controller(device))
+}
+
 fn looks_like_controller(device: &Device) -> bool {
     let Some(keys) = device.supported_keys() else {
         return false;
@@ -71,6 +80,102 @@ fn looks_like_controller(device: &Device) -> bool {
 
     let has_xy = abs.contains(AbsoluteAxisCode::ABS_X) && abs.contains(AbsoluteAxisCode::ABS_Y);
     has_face_button && has_xy
+}
+
+fn name_has_controller_hint(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    let direct_match = [
+        "controller",
+        "gamepad",
+        "joystick",
+        "joypad",
+        "x-box",
+        "xbox",
+        "dualshock",
+        "dualsense",
+        "steam",
+    ]
+    .iter()
+    .filter(|hint| **hint != "controller")
+    .any(|hint| name.contains(hint));
+
+    direct_match
+        || (name.contains("controller")
+            && [
+                "8bitdo",
+                "dual",
+                "game",
+                "nintendo",
+                "playstation",
+                "pro",
+                "sony",
+                "steam",
+                "switch",
+                "wireless",
+                "x-box",
+                "xbox",
+                "xinput",
+            ]
+            .iter()
+            .any(|hint| name.contains(hint)))
+}
+
+fn has_joystick_devlink(path: &Path) -> bool {
+    let Ok(target) = std::fs::canonicalize(path) else {
+        return false;
+    };
+
+    for dir in ["/dev/input/by-id", "/dev/input/by-path"] {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let file_name = entry.file_name().to_string_lossy().to_string();
+            if !file_name.contains("event-joystick") {
+                continue;
+            }
+            if std::fs::canonicalize(entry.path())
+                .map(|link_target| link_target == target)
+                .unwrap_or(false)
+            {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+fn device_kind(path: &Path, device: &Device) -> String {
+    let name = device.name().unwrap_or_default().to_ascii_lowercase();
+    let phys = device
+        .physical_path()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+
+    if sysfs_device_path(path)
+        .and_then(|sysfs_path| std::fs::canonicalize(sysfs_path).ok())
+        .map(|sysfs_path| sysfs_path.starts_with("/sys/devices/virtual/input"))
+        .unwrap_or(false)
+        || name.contains("virtual")
+        || name.contains("padproxy")
+        || phys.contains("uinput")
+    {
+        "virtual".to_string()
+    } else if device.input_id().bus_type().0 == 0x06 {
+        "virtual".to_string()
+    } else {
+        "physical".to_string()
+    }
+}
+
+fn sysfs_device_path(path: &Path) -> Option<PathBuf> {
+    let event_name = path.file_name()?;
+    Some(
+        Path::new("/sys/class/input")
+            .join(event_name)
+            .join("device"),
+    )
 }
 
 fn capabilities(device: &Device) -> Vec<String> {

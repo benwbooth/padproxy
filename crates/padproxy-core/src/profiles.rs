@@ -221,7 +221,7 @@ fn push_profile_dir(dirs: &mut Vec<PathBuf>, dir: PathBuf) {
 }
 
 pub fn load_profiles(dirs: &[PathBuf]) -> Result<Vec<Profile>> {
-    let mut profiles = Vec::new();
+    let mut profiles = HashMap::new();
 
     for dir in dirs {
         if !dir.is_dir() {
@@ -237,21 +237,28 @@ pub fn load_profiles(dirs: &[PathBuf]) -> Result<Vec<Profile>> {
             if !matches!(extension, Some("yaml" | "yml")) {
                 continue;
             }
-            profiles.push(load_profile(&path)?);
+            let profile = load_profile(&path)?;
+            profiles.insert(profile.id.clone(), profile);
         }
     }
 
+    let mut profiles = profiles.into_values().collect::<Vec<_>>();
     profiles.sort_by(|left, right| left.name.cmp(&right.name));
     Ok(profiles)
 }
 
 pub fn load_profile(path: &Path) -> Result<Profile> {
     let bytes = fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
+    parse_profile_bytes(&bytes, path)
+}
+
+pub fn parse_profile_bytes(bytes: &[u8], source_path: &Path) -> Result<Profile> {
     let raw: RawProfile = serde_yaml::from_slice(&bytes)
-        .with_context(|| format!("failed to parse {}", path.display()))?;
+        .with_context(|| format!("failed to parse {}", source_path.display()))?;
 
     let id = raw.id.unwrap_or_else(|| {
-        path.file_stem()
+        source_path
+            .file_stem()
             .unwrap_or_default()
             .to_string_lossy()
             .to_string()
@@ -291,7 +298,7 @@ pub fn load_profile(path: &Path) -> Result<Profile> {
         output_type,
         passthrough: raw.passthrough.unwrap_or(true),
         grab_source: raw.grab_source.unwrap_or(true),
-        source_path: path.to_path_buf(),
+        source_path: source_path.to_path_buf(),
         mappings,
     })
 }

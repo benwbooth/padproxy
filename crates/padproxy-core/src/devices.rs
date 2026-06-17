@@ -5,6 +5,7 @@ pub struct DeviceInfo {
     pub id: String,
     pub name: String,
     pub path: String,
+    pub device_kind: String,
     pub phys: String,
     pub uniq: String,
     pub bus: u16,
