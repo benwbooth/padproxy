@@ -1,0 +1,18 @@
+id: nes-2button-xa
+name: NES 2-button X/A diamond
+description: Maps a diamond-layout pad so X is run and A is jump.
+match:
+  name: "*"
+output:
+  type: xbox360
+passthrough: true
+grab_source: true
+mappings:
+  - from: btn:south
+    to: btn:south
+  - from: btn:east
+    to: btn:west
+  - from: btn:west
+    to: btn:east
+  - from: btn:north
+    to: btn:north

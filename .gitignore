@@ -1,0 +1,7 @@
+target/
+result
+/.qmlls.ini
+/.cache/
+*.user
+*.swp
+*~
