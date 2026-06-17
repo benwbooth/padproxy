@@ -1,6 +1,7 @@
 #[cxx_qt::bridge]
 pub mod qobject {
     unsafe extern "C++" {
+        include!("QtQml/qqmlregistration.h");
         include!("cxx-qt-lib/qstring.h");
         type QString = cxx_qt_lib::QString;
     }

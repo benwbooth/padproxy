@@ -10,6 +10,12 @@ ApplicationWindow {
     visible: true
     title: "PadProxy"
 
+    Component.onCompleted: Qt.callLater(function() {
+        root.show()
+        root.raise()
+        root.requestActivate()
+    })
+
     PadProxyController {
         id: backend
         Component.onCompleted: refresh()
