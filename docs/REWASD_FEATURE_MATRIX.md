@@ -91,20 +91,20 @@ Source pages consulted:
 
 ## Analog Controls
 
-- Stick deadzones.
+- Stick deadzones. Basic per-axis deadzone done.
 - Trigger zones.
 - Low, medium, and high zone mappings.
 - Stick response curves.
 - Custom response curves.
-- Axis inversion.
-- Axis range tuning.
+- Axis inversion. Basic per-axis inversion done.
+- Axis range tuning. Basic per-axis output min/max done.
 - Stick rotation.
 - Swap sticks.
 - Digital 8-way stick mode.
 - Diagonal stick mappings.
 - Mouse-to-stick conversion.
 - Stick-to-mouse conversion.
-- Per-axis sensitivity.
+- Per-axis sensitivity. Basic per-axis sensitivity done.
 
 ## Output Devices
 
@@ -183,5 +183,5 @@ Source pages consulted:
 4. Add remap ON/OFF/apply lifecycle from the GUI. Done.
 5. Add virtual output type selection and hide/grab policy controls. Done for implemented outputs; planned outputs are visible but disabled until their virtual-device backends exist.
 6. Add layers, then activators, then macros. Basic main/shift layers are done with hold/toggle activation, disable mappings, and held-button turbo; richer activators and macros remain.
-7. Add analog tuning.
+7. Add analog tuning. Basic per-axis deadzone, sensitivity, inversion, and output range are done.
 8. Add process autodetect and Lunchbox integration.

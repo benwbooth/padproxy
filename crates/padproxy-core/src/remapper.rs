@@ -1,6 +1,8 @@
 use crate::event_code::{event_from_input, virtual_xbox_supports, EventCode, EventKind};
 use crate::outputs::{output_device, supported_output_ids};
-use crate::profiles::{LayerActivation, LayerActivationMode, Mapping, MappingAction, Profile};
+use crate::profiles::{
+    AnalogTuning, LayerActivation, LayerActivationMode, Mapping, MappingAction, Profile,
+};
 use anyhow::{anyhow, Context, Result};
 use evdev::uinput::VirtualDevice;
 use evdev::{
@@ -38,6 +40,7 @@ pub struct RemapRuntime {
     pressed_activators: HashSet<(usize, EventCode)>,
     pressed_key_targets: HashMap<EventCode, EventCode>,
     turbo_states: HashMap<EventCode, TurboState>,
+    analog_tuning: HashMap<EventCode, AnalogTuning>,
     virtual_nodes: Vec<String>,
 }
 
@@ -148,6 +151,7 @@ impl RemapRuntime {
                 mappings: layer.mapping_behavior_table(),
             })
             .collect();
+        let analog_tuning = options.profile.analog.tuning_table();
 
         Ok(Self {
             profile: options.profile,
@@ -159,6 +163,7 @@ impl RemapRuntime {
             pressed_activators: HashSet::new(),
             pressed_key_targets: HashMap::new(),
             turbo_states: HashMap::new(),
+            analog_tuning,
             virtual_nodes,
         })
     }
@@ -325,6 +330,7 @@ impl RemapRuntime {
         {
             return;
         }
+        let value = self.apply_analog_tuning(source_event, resolved.target, value);
         push_input_event(output, resolved.target, value);
     }
 
@@ -370,6 +376,19 @@ impl RemapRuntime {
             }
         }
         0
+    }
+
+    fn apply_analog_tuning(
+        &self,
+        source_event: EventCode,
+        target_event: EventCode,
+        value: i32,
+    ) -> i32 {
+        self.analog_tuning
+            .get(&target_event)
+            .or_else(|| self.analog_tuning.get(&source_event))
+            .map(|tuning| tuning.apply(value))
+            .unwrap_or(value)
     }
 }
 

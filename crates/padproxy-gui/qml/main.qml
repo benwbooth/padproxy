@@ -88,6 +88,16 @@ ApplicationWindow {
         "abs:hat0x",
         "abs:hat0y"
     ]
+    property var analogAxisCodes: [
+        "abs:x",
+        "abs:y",
+        "abs:rx",
+        "abs:ry",
+        "abs:z",
+        "abs:rz",
+        "abs:hat0x",
+        "abs:hat0y"
+    ]
     property var controllerTemplates: [
         {
             name: "Xbox",
@@ -276,6 +286,93 @@ ApplicationWindow {
         if (!Number.isFinite(number))
             return 75
         return Math.max(10, Math.min(5000, Math.round(number)))
+    }
+
+    function normalizedPercent(value, fallback, minValue, maxValue) {
+        const number = Number(value)
+        if (!Number.isFinite(number))
+            return fallback
+        return Math.max(minValue, Math.min(maxValue, Math.round(number)))
+    }
+
+    function analogRangeMin(code) {
+        if (code === "abs:z" || code === "abs:rz")
+            return 0
+        if (code === "abs:hat0x" || code === "abs:hat0y")
+            return -1
+        return -32768
+    }
+
+    function analogRangeMax(code) {
+        if (code === "abs:z" || code === "abs:rz")
+            return 255
+        if (code === "abs:hat0x" || code === "abs:hat0y")
+            return 1
+        return 32767
+    }
+
+    function addAnalogAxis(code) {
+        let axisCode = code || ""
+        if (axisCode.length === 0) {
+            for (let i = 0; i < root.analogAxisCodes.length; i++) {
+                let used = false
+                for (let row = 0; row < analogModel.count; row++) {
+                    if (analogModel.get(row).code === root.analogAxisCodes[i]) {
+                        used = true
+                        break
+                    }
+                }
+                if (!used) {
+                    axisCode = root.analogAxisCodes[i]
+                    break
+                }
+            }
+        }
+        if (axisCode.length === 0)
+            axisCode = "abs:x"
+        analogModel.append({
+            code: axisCode,
+            deadzonePercent: 0,
+            sensitivityPercent: 100,
+            invert: false,
+            outputMin: root.analogRangeMin(axisCode),
+            outputMax: root.analogRangeMax(axisCode)
+        })
+    }
+
+    function loadAnalogSettings(analog) {
+        analogModel.clear()
+        const axes = analog && analog.axes ? analog.axes : []
+        for (let i = 0; i < axes.length; i++) {
+            const axisCode = axes[i].code_name || axes[i].code || "abs:x"
+            analogModel.append({
+                code: axisCode,
+                deadzonePercent: root.normalizedPercent((axes[i].deadzone || 0) * 100, 0, 0, 99),
+                sensitivityPercent: root.normalizedPercent((axes[i].sensitivity || 1) * 100, 100, 1, 400),
+                invert: axes[i].invert === true,
+                outputMin: axes[i].output_min !== undefined ? axes[i].output_min : root.analogRangeMin(axisCode),
+                outputMax: axes[i].output_max !== undefined ? axes[i].output_max : root.analogRangeMax(axisCode)
+            })
+        }
+    }
+
+    function analogYaml() {
+        if (analogModel.count === 0)
+            return ""
+
+        let text = "analog:\n"
+        text += "  axes:\n"
+        for (let i = 0; i < analogModel.count; i++) {
+            const row = analogModel.get(i)
+            const code = row.code || "abs:x"
+            text += "    - code: " + code + "\n"
+            text += "      deadzone: " + (root.normalizedPercent(row.deadzonePercent, 0, 0, 99) / 100).toFixed(2) + "\n"
+            text += "      sensitivity: " + (root.normalizedPercent(row.sensitivityPercent, 100, 1, 400) / 100).toFixed(2) + "\n"
+            text += "      invert: " + (row.invert === true ? "true" : "false") + "\n"
+            text += "      output_min: " + (row.outputMin !== undefined ? row.outputMin : root.analogRangeMin(code)) + "\n"
+            text += "      output_max: " + (row.outputMax !== undefined ? row.outputMax : root.analogRangeMax(code)) + "\n"
+        }
+        return text
     }
 
     function sanitizeLayerId(value, fallback) {
@@ -583,6 +680,7 @@ ApplicationWindow {
             { fromCode: "btn:west", toCode: "btn:east" },
             { fromCode: "btn:east", toCode: "btn:west" }
         ])
+        analogModel.clear()
         backend.new_profile()
     }
 
@@ -614,6 +712,7 @@ ApplicationWindow {
         }
         root.selectedLayerIndex = 0
         root.setMappingRows(root.layerMappings[0])
+        root.loadAnalogSettings(profile.analog)
         Qt.callLater(root.loadCurrentLayerFields)
     }
 
@@ -650,6 +749,7 @@ ApplicationWindow {
         text += "  type: " + root.currentOutputId() + "\n"
         text += "passthrough: " + (root.currentPassthrough() ? "true" : "false") + "\n"
         text += "grab_source: " + (root.currentGrabSource() ? "true" : "false") + "\n"
+        text += root.analogYaml()
         if (layersModel.count <= 1) {
             const rows = root.layerMappings[0] || []
             if (rows.length === 0) {
@@ -727,6 +827,10 @@ ApplicationWindow {
 
     ListModel {
         id: layersModel
+    }
+
+    ListModel {
+        id: analogModel
     }
 
     Timer {
@@ -1084,6 +1188,156 @@ ApplicationWindow {
                                             text: "Do not pass activator through"
                                             checked: true
                                             onToggled: root.syncCurrentLayerMetadata()
+                                        }
+                                    }
+                                }
+                            }
+
+                            Frame {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: Math.max(190, analogModel.count * 116 + 56)
+
+                                ColumnLayout {
+                                    anchors.fill: parent
+                                    spacing: 8
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+
+                                        Label {
+                                            text: "Analog"
+                                            font.bold: true
+                                        }
+
+                                        Item {
+                                            Layout.fillWidth: true
+                                        }
+
+                                        Button {
+                                            text: "Add Axis"
+                                            onClicked: root.addAnalogAxis("")
+                                        }
+                                    }
+
+                                    ListView {
+                                        id: analogList
+                                        Layout.fillWidth: true
+                                        Layout.fillHeight: true
+                                        clip: true
+                                        model: analogModel
+
+                                        delegate: Rectangle {
+                                            width: ListView.view.width
+                                            height: 110
+                                            color: index % 2 === 0 ? "#1d232b" : "transparent"
+                                            radius: 4
+
+                                            ColumnLayout {
+                                                anchors.fill: parent
+                                                anchors.margins: 4
+                                                spacing: 4
+
+                                                RowLayout {
+                                                    Layout.fillWidth: true
+                                                    spacing: 8
+
+                                                    ComboBox {
+                                                        model: root.analogAxisCodes
+                                                        currentIndex: Math.max(0, root.analogAxisCodes.indexOf(code))
+                                                        Layout.fillWidth: true
+                                                        onActivated: {
+                                                            const nextCode = currentText
+                                                            analogModel.setProperty(index, "code", nextCode)
+                                                            analogModel.setProperty(index, "outputMin", root.analogRangeMin(nextCode))
+                                                            analogModel.setProperty(index, "outputMax", root.analogRangeMax(nextCode))
+                                                        }
+                                                        ToolTip.visible: hovered
+                                                        ToolTip.text: root.eventLabel(currentText)
+                                                    }
+
+                                                    CheckBox {
+                                                        text: "Invert"
+                                                        checked: invert === true
+                                                        Layout.preferredWidth: 86
+                                                        onToggled: analogModel.setProperty(index, "invert", checked)
+                                                    }
+
+                                                    Button {
+                                                        text: "Remove"
+                                                        onClicked: analogModel.remove(index)
+                                                    }
+                                                }
+
+                                                RowLayout {
+                                                    Layout.fillWidth: true
+                                                    spacing: 8
+
+                                                    Label {
+                                                        text: "DZ"
+                                                        Layout.preferredWidth: 30
+                                                        horizontalAlignment: Text.AlignRight
+                                                    }
+
+                                                    SpinBox {
+                                                        from: 0
+                                                        to: 99
+                                                        editable: true
+                                                        value: root.normalizedPercent(deadzonePercent, 0, 0, 99)
+                                                        Layout.fillWidth: true
+                                                        onValueModified: analogModel.setProperty(index, "deadzonePercent", value)
+                                                    }
+
+                                                    Label {
+                                                        text: "Sens"
+                                                        Layout.preferredWidth: 42
+                                                        horizontalAlignment: Text.AlignRight
+                                                    }
+
+                                                    SpinBox {
+                                                        from: 1
+                                                        to: 400
+                                                        editable: true
+                                                        value: root.normalizedPercent(sensitivityPercent, 100, 1, 400)
+                                                        Layout.fillWidth: true
+                                                        onValueModified: analogModel.setProperty(index, "sensitivityPercent", value)
+                                                    }
+                                                }
+
+                                                RowLayout {
+                                                    Layout.fillWidth: true
+                                                    spacing: 8
+
+                                                    Label {
+                                                        text: "Min"
+                                                        Layout.preferredWidth: 30
+                                                        horizontalAlignment: Text.AlignRight
+                                                    }
+
+                                                    SpinBox {
+                                                        from: root.analogRangeMin(code)
+                                                        to: root.analogRangeMax(code) - 1
+                                                        editable: true
+                                                        value: outputMin !== undefined ? outputMin : root.analogRangeMin(code)
+                                                        Layout.fillWidth: true
+                                                        onValueModified: analogModel.setProperty(index, "outputMin", value)
+                                                    }
+
+                                                    Label {
+                                                        text: "Max"
+                                                        Layout.preferredWidth: 42
+                                                        horizontalAlignment: Text.AlignRight
+                                                    }
+
+                                                    SpinBox {
+                                                        from: root.analogRangeMin(code) + 1
+                                                        to: root.analogRangeMax(code)
+                                                        editable: true
+                                                        value: outputMax !== undefined ? outputMax : root.analogRangeMax(code)
+                                                        Layout.fillWidth: true
+                                                        onValueModified: analogModel.setProperty(index, "outputMax", value)
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }

@@ -1,5 +1,5 @@
 use crate::devices::DeviceInfo;
-use crate::event_code::{parse_event_code, virtual_xbox_supports, EventCode};
+use crate::event_code::{parse_event_code, virtual_xbox_supports, EventCode, EventKind};
 use crate::outputs::normalize_output_type;
 use anyhow::{anyhow, Context, Result};
 use serde::de::{self, Visitor};
@@ -46,6 +46,22 @@ pub struct TurboSettings {
     pub interval_ms: u64,
 }
 
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct AnalogSettings {
+    pub axes: Vec<AnalogTuning>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct AnalogTuning {
+    pub code: EventCode,
+    pub code_name: String,
+    pub deadzone: f64,
+    pub sensitivity: f64,
+    pub invert: bool,
+    pub output_min: i32,
+    pub output_max: i32,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LayerActivationMode {
@@ -81,6 +97,7 @@ pub struct Profile {
     pub source_path: PathBuf,
     pub mappings: Vec<Mapping>,
     pub layers: Vec<Layer>,
+    pub analog: AnalogSettings,
 }
 
 #[derive(Debug, Deserialize)]
@@ -95,6 +112,7 @@ struct RawProfile {
     grab_source: Option<bool>,
     mappings: Option<Vec<RawMapping>>,
     layers: Option<Vec<RawLayer>>,
+    analog: Option<RawAnalogSettings>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -126,6 +144,23 @@ struct RawTurboObject {
     enabled: Option<bool>,
     interval_ms: Option<u64>,
     rate_hz: Option<f64>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawAnalogSettings {
+    axes: Option<Vec<RawAnalogTuning>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawAnalogTuning {
+    code: String,
+    deadzone: Option<f64>,
+    sensitivity: Option<f64>,
+    invert: Option<bool>,
+    output_min: Option<i32>,
+    output_max: Option<i32>,
+    min: Option<i32>,
+    max: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -298,6 +333,111 @@ impl Layer {
     }
 }
 
+impl AnalogSettings {
+    pub fn tuning_table(&self) -> HashMap<EventCode, AnalogTuning> {
+        self.axes
+            .iter()
+            .map(|tuning| (tuning.code, tuning.clone()))
+            .collect()
+    }
+}
+
+impl AnalogTuning {
+    pub fn apply(&self, value: i32) -> i32 {
+        let Some(range) = AxisRange::for_event(self.code) else {
+            return value;
+        };
+
+        let normalized = if range.centered {
+            let max_abs = range.max.unsigned_abs().max(range.min.unsigned_abs()) as f64;
+            if max_abs == 0.0 {
+                0.0
+            } else {
+                (value as f64 / max_abs).clamp(-1.0, 1.0)
+            }
+        } else {
+            let span = (range.max - range.min) as f64;
+            if span == 0.0 {
+                0.0
+            } else {
+                ((value - range.min) as f64 / span).clamp(0.0, 1.0)
+            }
+        };
+
+        let deadzone = self.deadzone.clamp(0.0, 0.99);
+        let mut adjusted = if range.centered {
+            let magnitude = normalized.abs();
+            if magnitude <= deadzone {
+                0.0
+            } else {
+                normalized.signum() * ((magnitude - deadzone) / (1.0 - deadzone))
+            }
+        } else if normalized <= deadzone {
+            0.0
+        } else {
+            (normalized - deadzone) / (1.0 - deadzone)
+        };
+
+        adjusted *= self.sensitivity;
+        adjusted = if range.centered {
+            adjusted.clamp(-1.0, 1.0)
+        } else {
+            adjusted.clamp(0.0, 1.0)
+        };
+
+        if self.invert {
+            adjusted = if range.centered {
+                -adjusted
+            } else {
+                1.0 - adjusted
+            };
+        }
+
+        let scaled = if range.centered {
+            let max_abs = range.max.unsigned_abs().max(range.min.unsigned_abs()) as f64;
+            (adjusted * max_abs).round() as i32
+        } else {
+            let span = (range.max - range.min) as f64;
+            range.min + (adjusted * span).round() as i32
+        };
+
+        scaled.clamp(self.output_min, self.output_max)
+    }
+}
+
+#[derive(Clone, Copy)]
+struct AxisRange {
+    min: i32,
+    max: i32,
+    centered: bool,
+}
+
+impl AxisRange {
+    fn for_event(event: EventCode) -> Option<Self> {
+        if event.kind != EventKind::Absolute {
+            return None;
+        }
+
+        match event.name().as_str() {
+            "abs:z" | "abs:rz" => Some(Self {
+                min: 0,
+                max: 255,
+                centered: false,
+            }),
+            "abs:hat0x" | "abs:hat0y" => Some(Self {
+                min: -1,
+                max: 1,
+                centered: true,
+            }),
+            _ => Some(Self {
+                min: -32768,
+                max: 32767,
+                centered: true,
+            }),
+        }
+    }
+}
+
 pub fn default_profile_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
     let mut have_configured_profile_dir = false;
@@ -446,6 +586,7 @@ pub fn parse_profile_bytes(bytes: &[u8], source_path: &Path) -> Result<Profile> 
     }
 
     let mappings = layers[0].mappings.clone();
+    let analog = parse_analog_settings(raw.analog)?;
 
     Ok(Profile {
         id,
@@ -458,6 +599,7 @@ pub fn parse_profile_bytes(bytes: &[u8], source_path: &Path) -> Result<Profile> 
         source_path: source_path.to_path_buf(),
         mappings,
         layers,
+        analog,
     })
 }
 
@@ -576,6 +718,75 @@ fn normalize_mapping_keyword(value: &str) -> String {
     value.trim().to_ascii_lowercase().replace([' ', '-'], "_")
 }
 
+fn parse_analog_settings(raw: Option<RawAnalogSettings>) -> Result<AnalogSettings> {
+    let Some(raw) = raw else {
+        return Ok(AnalogSettings::default());
+    };
+
+    let mut axes = Vec::new();
+    for axis in raw.axes.unwrap_or_default() {
+        let code = parse_event_code(&axis.code)
+            .ok_or_else(|| anyhow!("unknown analog axis {}", axis.code))?;
+        if code.kind != EventKind::Absolute {
+            return Err(anyhow!(
+                "analog tuning {} must target an absolute axis",
+                axis.code
+            ));
+        }
+        if !virtual_xbox_supports(code) {
+            return Err(anyhow!(
+                "analog tuning {} is not supported by the current virtual pad",
+                axis.code
+            ));
+        }
+        if axes
+            .iter()
+            .any(|existing: &AnalogTuning| existing.code == code)
+        {
+            return Err(anyhow!("duplicate analog tuning for {}", code.name()));
+        }
+
+        let range = AxisRange::for_event(code).expect("absolute axes have an output range");
+        let deadzone = axis.deadzone.unwrap_or(0.0);
+        if !(0.0..=0.99).contains(&deadzone) {
+            return Err(anyhow!(
+                "analog deadzone for {} must be between 0 and 0.99",
+                axis.code
+            ));
+        }
+        let sensitivity = axis.sensitivity.unwrap_or(1.0);
+        if !(0.01..=4.0).contains(&sensitivity) {
+            return Err(anyhow!(
+                "analog sensitivity for {} must be between 0.01 and 4.0",
+                axis.code
+            ));
+        }
+
+        let output_min = axis.output_min.or(axis.min).unwrap_or(range.min);
+        let output_max = axis.output_max.or(axis.max).unwrap_or(range.max);
+        if output_min < range.min || output_max > range.max || output_min >= output_max {
+            return Err(anyhow!(
+                "analog output range for {} must stay within {}..{}",
+                axis.code,
+                range.min,
+                range.max
+            ));
+        }
+
+        axes.push(AnalogTuning {
+            code,
+            code_name: code.name(),
+            deadzone,
+            sensitivity,
+            invert: axis.invert.unwrap_or(false),
+            output_min,
+            output_max,
+        });
+    }
+
+    Ok(AnalogSettings { axes })
+}
+
 fn parse_layer_activation(raw: RawLayerActivation, layer_id: &str) -> Result<LayerActivation> {
     let (mode, control, consume) = match raw {
         RawLayerActivation::Scalar(control) => (LayerActivationMode::Hold, control, true),
@@ -651,9 +862,11 @@ fn normalize_layer_id(value: &str) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
+    use crate::event_code::parse_event_code;
+
     use super::{
-        parse_profile_bytes, LayerActivationMode, MappingAction, DEFAULT_TURBO_INTERVAL_MS,
-        MAIN_LAYER_ID, MAX_SHIFT_LAYERS,
+        parse_profile_bytes, AnalogTuning, LayerActivationMode, MappingAction,
+        DEFAULT_TURBO_INTERVAL_MS, MAIN_LAYER_ID, MAX_SHIFT_LAYERS,
     };
     use std::path::Path;
 
@@ -802,5 +1015,95 @@ mappings:
             axis_error.contains("button source and target"),
             "{axis_error}"
         );
+    }
+
+    #[test]
+    fn parses_analog_axis_tuning() {
+        let profile = parse_profile_bytes(
+            br#"
+id: analog
+analog:
+  axes:
+    - code: abs:x
+      deadzone: 0.2
+      sensitivity: 1.5
+      invert: true
+      output_min: -20000
+      output_max: 20000
+    - code: abs:z
+      deadzone: 0.1
+      max: 200
+"#,
+            Path::new("analog.yaml"),
+        )
+        .unwrap();
+
+        assert_eq!(profile.analog.axes.len(), 2);
+        assert_eq!(profile.analog.axes[0].code_name, "abs:x");
+        assert_eq!(profile.analog.axes[0].deadzone, 0.2);
+        assert_eq!(profile.analog.axes[0].sensitivity, 1.5);
+        assert!(profile.analog.axes[0].invert);
+        assert_eq!(profile.analog.axes[0].output_min, -20000);
+        assert_eq!(profile.analog.axes[1].code_name, "abs:z");
+        assert_eq!(profile.analog.tuning_table().len(), 2);
+    }
+
+    #[test]
+    fn rejects_invalid_analog_tuning() {
+        let error = parse_profile_bytes(
+            br#"
+id: bad-analog
+analog:
+  axes:
+    - code: btn:south
+      deadzone: 0.1
+"#,
+            Path::new("bad-analog.yaml"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("absolute axis"), "{error}");
+
+        let error = parse_profile_bytes(
+            br#"
+id: bad-range
+analog:
+  axes:
+    - code: abs:x
+      output_min: -50000
+"#,
+            Path::new("bad-range.yaml"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("output range"), "{error}");
+    }
+
+    #[test]
+    fn applies_analog_tuning_to_sticks_and_triggers() {
+        let stick = AnalogTuning {
+            code: parse_event_code("abs:x").unwrap(),
+            code_name: "abs:x".to_string(),
+            deadzone: 0.2,
+            sensitivity: 1.5,
+            invert: true,
+            output_min: -20000,
+            output_max: 20000,
+        };
+        assert_eq!(stick.apply(3000), 0);
+        assert!(stick.apply(16_384) < -18_000);
+        assert_eq!(stick.apply(32_767), -20000);
+
+        let trigger = AnalogTuning {
+            code: parse_event_code("abs:z").unwrap(),
+            code_name: "abs:z".to_string(),
+            deadzone: 0.1,
+            sensitivity: 1.0,
+            invert: false,
+            output_min: 0,
+            output_max: 200,
+        };
+        assert_eq!(trigger.apply(10), 0);
+        assert_eq!(trigger.apply(255), 200);
     }
 }

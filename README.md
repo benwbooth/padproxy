@@ -88,11 +88,12 @@ Xbox/PlayStation/generic controller templates, and `Listen` can fill the active
 source or target control from the selected physical controller. The layer
 selector edits the main layer plus up to ten shift layers, each activated by a
 hold or toggle control. Individual mapping rows can map, disable, or turbo a
-button output. The editor shows implemented and planned virtual outputs, but
-only implemented outputs can be applied. `Apply` starts a background remap using
-the selected controller and current profile contents; `Remap Off` stops it and
-removes the virtual controller. The `YAML` tab remains available for raw edits.
-`Save` writes the result to
+button output. The analog panel tunes virtual axes with deadzone, sensitivity,
+inversion, and output range controls. The editor shows implemented and planned
+virtual outputs, but only implemented outputs can be applied. `Apply` starts a
+background remap using the selected controller and current profile contents;
+`Remap Off` stops it and removes the virtual controller. The `YAML` tab remains
+available for raw edits. `Save` writes the result to
 `~/.config/padproxy/profiles.d`. Packaged profiles are read-only; saving one
 creates a user copy with the same profile id.
 
@@ -113,6 +114,14 @@ output:
   type: xbox360
 passthrough: true
 grab_source: true
+analog:
+  axes:
+    - code: abs:x
+      deadzone: 0.15
+      sensitivity: 1.25
+      invert: false
+      output_min: -32768
+      output_max: 32767
 mappings:
   - from: btn:south
     to: btn:south
