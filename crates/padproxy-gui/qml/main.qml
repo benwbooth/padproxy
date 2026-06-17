@@ -336,11 +336,30 @@ ApplicationWindow {
         return text
     }
 
+    function currentProfileYaml() {
+        return editorTabs.currentIndex === 0 ? root.structuredProfileYaml() : profileEditor.text
+    }
+
     function saveCurrentEditor() {
         if (editorTabs.currentIndex === 0)
-            backend.save_profile(root.structuredProfileYaml())
+            backend.save_profile(root.currentProfileYaml())
         else
-            backend.save_profile(profileEditor.text)
+            backend.save_profile(root.currentProfileYaml())
+    }
+
+    function startRemap() {
+        const device = root.selectedDevice()
+        if (!device)
+            return
+
+        const result = backend.start_remap(device.path, root.currentProfileYaml())
+        if (result === "ok")
+            remapTimer.restart()
+    }
+
+    function stopRemap() {
+        remapTimer.stop()
+        backend.stop_remap()
     }
 
     Connections {
@@ -371,6 +390,18 @@ ApplicationWindow {
             if (root.eventCodes.indexOf(code) >= 0)
                 root.updateSelectedMapping(code)
             root.stopHook()
+        }
+    }
+
+    Timer {
+        id: remapTimer
+        interval: 250
+        repeat: true
+
+        onTriggered: {
+            backend.poll_remap()
+            if (!backend.remap_active)
+                stop()
         }
     }
 
@@ -499,6 +530,12 @@ ApplicationWindow {
                     }
 
                     Button {
+                        text: backend.remap_active ? "Remap Off" : "Apply"
+                        enabled: backend.remap_active || root.selectedDevice() !== null
+                        onClicked: backend.remap_active ? root.stopRemap() : root.startRemap()
+                    }
+
+                    Button {
                         text: "Save"
                         enabled: editorTabs.currentIndex === 0
                             ? profileIdField.text.trim().length > 0
@@ -512,6 +549,13 @@ ApplicationWindow {
                         ? backend.editing_profile_path
                         : "No profile loaded."
                     elide: Text.ElideMiddle
+                    Layout.fillWidth: true
+                }
+
+                Label {
+                    text: backend.remap_status
+                    visible: text.length > 0
+                    elide: Text.ElideRight
                     Layout.fillWidth: true
                 }
 

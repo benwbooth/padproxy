@@ -15,6 +15,8 @@ pub mod qobject {
         #[qproperty(QString, profile_yaml)]
         #[qproperty(QString, editing_profile_path)]
         #[qproperty(QString, capture_status)]
+        #[qproperty(QString, remap_status)]
+        #[qproperty(bool, remap_active)]
         type PadProxyController = super::PadProxyControllerRust;
 
         #[qinvokable]
@@ -37,6 +39,15 @@ pub mod qobject {
 
         #[qinvokable]
         fn stop_capture(self: Pin<&mut Self>);
+
+        #[qinvokable]
+        fn start_remap(self: Pin<&mut Self>, path: QString, yaml: QString) -> QString;
+
+        #[qinvokable]
+        fn stop_remap(self: Pin<&mut Self>);
+
+        #[qinvokable]
+        fn poll_remap(self: Pin<&mut Self>);
     }
 }
 
@@ -44,7 +55,11 @@ use core::pin::Pin;
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::QString;
 use padproxy_core::capture::CaptureReader;
+use padproxy_core::remapper::{RemapOptions, RemapRuntime};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc};
+use std::thread::JoinHandle;
 
 pub fn init_qt_static_modules() {
     cxx_qt::init_crate!(cxx_qt);
@@ -61,8 +76,32 @@ pub struct PadProxyControllerRust {
     profile_yaml: QString,
     editing_profile_path: QString,
     capture_status: QString,
+    remap_status: QString,
+    remap_active: bool,
     capture_device_path: String,
     capture_reader: Option<CaptureReader>,
+    remap_session: Option<GuiRemapSession>,
+}
+
+struct GuiRemapSession {
+    stop: Arc<AtomicBool>,
+    receiver: mpsc::Receiver<RemapMessage>,
+    thread: Option<JoinHandle<()>>,
+}
+
+enum RemapMessage {
+    Running(Vec<String>),
+    Stopped,
+    Failed(String),
+}
+
+impl Drop for GuiRemapSession {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
 }
 
 impl qobject::PadProxyController {
@@ -206,6 +245,129 @@ mappings:\n\
         this.as_mut()
             .set_capture_status(QString::from("Hook mode off"));
     }
+
+    pub fn start_remap(self: Pin<&mut Self>, path: QString, yaml: QString) -> QString {
+        let mut this = self;
+        stop_remap_session(this.as_mut());
+
+        let path = path.to_string();
+        let yaml = yaml.to_string();
+        let profile = match padproxy_core::profiles::parse_profile_bytes(
+            yaml.as_bytes(),
+            Path::new("profile.yaml"),
+        ) {
+            Ok(profile) => profile,
+            Err(error) => {
+                this.as_mut()
+                    .set_remap_status(QString::from(format!("Failed to apply profile: {error}")));
+                this.as_mut().set_remap_active(false);
+                return QString::from("");
+            }
+        };
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let worker_stop = Arc::clone(&stop);
+        let (sender, receiver) = mpsc::channel();
+        let worker_path = path.clone();
+        let thread = std::thread::spawn(move || {
+            let runtime = RemapRuntime::start(RemapOptions {
+                profile,
+                source_device_path: worker_path,
+            });
+            let mut runtime = match runtime {
+                Ok(runtime) => runtime,
+                Err(error) => {
+                    let _ = sender.send(RemapMessage::Failed(error.to_string()));
+                    return;
+                }
+            };
+
+            let _ = sender.send(RemapMessage::Running(runtime.virtual_nodes().to_vec()));
+            while !worker_stop.load(Ordering::Relaxed) {
+                if let Err(error) = runtime.pump_once() {
+                    let _ = sender.send(RemapMessage::Failed(error.to_string()));
+                    return;
+                }
+            }
+            let _ = sender.send(RemapMessage::Stopped);
+        });
+
+        {
+            let mut rust = this.as_mut().rust_mut();
+            rust.remap_session = Some(GuiRemapSession {
+                stop,
+                receiver,
+                thread: Some(thread),
+            });
+        }
+        this.as_mut().set_remap_active(true);
+        this.as_mut().set_remap_status(QString::from(format!(
+            "Starting remap on {}",
+            display_device_path(&path)
+        )));
+        QString::from("ok")
+    }
+
+    pub fn stop_remap(self: Pin<&mut Self>) {
+        let mut this = self;
+        stop_remap_session(this.as_mut());
+        this.as_mut().set_remap_active(false);
+        this.as_mut().set_remap_status(QString::from("Remap off"));
+    }
+
+    pub fn poll_remap(self: Pin<&mut Self>) {
+        let mut this = self;
+        let mut messages = Vec::new();
+        let mut should_finish = false;
+
+        {
+            let mut rust = this.as_mut().rust_mut();
+            if let Some(session) = rust.remap_session.as_mut() {
+                loop {
+                    match session.receiver.try_recv() {
+                        Ok(message) => messages.push(message),
+                        Err(mpsc::TryRecvError::Empty) => break,
+                        Err(mpsc::TryRecvError::Disconnected) => {
+                            messages.push(RemapMessage::Failed(
+                                "Remap worker disconnected".to_string(),
+                            ));
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        for message in messages {
+            match message {
+                RemapMessage::Running(nodes) => {
+                    let detail = if nodes.is_empty() {
+                        "virtual controller ready".to_string()
+                    } else {
+                        format!("virtual controller ready: {}", nodes.join(", "))
+                    };
+                    this.as_mut()
+                        .set_remap_status(QString::from(format!("Remap on, {detail}")));
+                    this.as_mut().set_remap_active(true);
+                }
+                RemapMessage::Stopped => {
+                    this.as_mut().set_remap_status(QString::from("Remap off"));
+                    this.as_mut().set_remap_active(false);
+                    should_finish = true;
+                }
+                RemapMessage::Failed(error) => {
+                    this.as_mut()
+                        .set_remap_status(QString::from(format!("Remap failed: {error}")));
+                    this.as_mut().set_remap_active(false);
+                    should_finish = true;
+                }
+            }
+        }
+
+        if should_finish {
+            finish_remap_session(this.as_mut());
+        }
+    }
 }
 
 fn refresh_json() -> anyhow::Result<(String, String, String)> {
@@ -223,6 +385,31 @@ fn refresh_json() -> anyhow::Result<(String, String, String)> {
         serde_json::to_string(&profiles)?,
         status,
     ))
+}
+
+fn stop_remap_session(mut controller: Pin<&mut qobject::PadProxyController>) {
+    let session = {
+        let mut rust = controller.as_mut().rust_mut();
+        rust.remap_session.take()
+    };
+    if let Some(mut session) = session {
+        session.stop.store(true, Ordering::Relaxed);
+        if let Some(thread) = session.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+fn finish_remap_session(mut controller: Pin<&mut qobject::PadProxyController>) {
+    let session = {
+        let mut rust = controller.as_mut().rust_mut();
+        rust.remap_session.take()
+    };
+    if let Some(mut session) = session {
+        if let Some(thread) = session.thread.take() {
+            let _ = thread.join();
+        }
+    }
 }
 
 fn refresh_into(mut controller: Pin<&mut qobject::PadProxyController>) {
