@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 460">
+  <defs>
+    <linearGradient id="body" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#e5e7eb"/>
+      <stop offset="1" stop-color="#52525b"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0" stop-color="#334155"/>
+      <stop offset="1" stop-color="#111827"/>
+    </linearGradient>
+  </defs>
+  <path d="M248 125c54-23 143-9 191 20h122c48-29 137-43 191-20 59 25 98 85 116 151l38 139c7 25-15 48-40 41l-110-30c-31-8-56-31-69-61l-31-72H344l-31 72c-13 30-38 53-69 61l-110 30c-25 7-47-16-40-41l38-139c18-66 57-126 116-151z" fill="url(#body)" stroke="#f8fafc" stroke-width="6"/>
+  <path d="M225 44h200c18 0 32 14 32 32v45H191V78c0-19 15-34 34-34z" fill="#d4d4d8" stroke="#71717a" stroke-width="5"/>
+  <path d="M575 44h200c19 0 34 15 34 34v43H543V76c0-18 14-32 32-32z" fill="#d4d4d8" stroke="#71717a" stroke-width="5"/>
+  <path d="M301 159h398c23 0 41 18 41 41v45c0 23-18 41-41 41H301c-23 0-41-18-41-41v-45c0-23 18-41 41-41z" fill="url(#panel)" stroke="#94a3b8" stroke-width="5"/>
+  <circle cx="312" cy="275" r="51" fill="#111827" stroke="#e2e8f0" stroke-width="7"/>
+  <circle cx="312" cy="275" r="30" fill="#475569" stroke="#111827" stroke-width="5"/>
+  <circle cx="688" cy="275" r="51" fill="#111827" stroke="#e2e8f0" stroke-width="7"/>
+  <circle cx="688" cy="275" r="30" fill="#475569" stroke="#111827" stroke-width="5"/>
+  <path d="M187 212h43v-43h52v43h43v52h-43v43h-52v-43h-43z" fill="#27272a" stroke="#e5e7eb" stroke-width="5"/>
+  <circle cx="500" cy="271" r="33" fill="#1f2937" stroke="#e5e7eb" stroke-width="5"/>
+  <circle cx="421" cy="215" r="17" fill="#111827" stroke="#d1d5db" stroke-width="4"/>
+  <circle cx="579" cy="215" r="17" fill="#111827" stroke="#d1d5db" stroke-width="4"/>
+  <rect x="712" y="197" width="48" height="48" rx="8" fill="#1d4ed8" stroke="#bfdbfe" stroke-width="5"/>
+  <path d="M802 157l31 52h-62z" fill="#16a34a" stroke="#bbf7d0" stroke-width="5"/>
+  <circle cx="879" cy="221" r="27" fill="#ef4444" stroke="#fecaca" stroke-width="5"/>
+  <path d="M802 255l34 34-34 34-34-34z" fill="#e879f9" stroke="#f5d0fe" stroke-width="5"/>
+</svg>

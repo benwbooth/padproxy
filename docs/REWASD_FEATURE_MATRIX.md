@@ -177,8 +177,8 @@ Source pages consulted:
 
 ## Near-Term PadProxy Milestones
 
-1. Replace YAML-first editing with a structured mapping editor.
-2. Add clickable SVG controller images for Xbox, PlayStation, and generic pads.
+1. Replace YAML-first editing with a structured mapping editor. Done.
+2. Add clickable SVG controller images for Xbox, PlayStation, and generic pads. Done.
 3. Add hook mode to pick source and target controls by pressing buttons.
 4. Add remap ON/OFF/apply lifecycle from the GUI.
 5. Add virtual output type selection and hide/grab policy controls.

@@ -16,6 +16,7 @@
           paths = [
             pkgs.qt6.qtbase
             pkgs.qt6.qtdeclarative
+            pkgs.qt6.qtsvg
           ];
         };
         qmakeForCxxQt = pkgs.writeShellScriptBin "padproxy-qmake6" ''
@@ -69,6 +70,7 @@
             pkgs.libglvnd
             pkgs.qt6.qtbase
             pkgs.qt6.qtdeclarative
+            pkgs.qt6.qtsvg
             qtEnv
           ];
 

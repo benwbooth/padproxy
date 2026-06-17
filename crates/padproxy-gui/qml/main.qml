@@ -37,20 +37,22 @@ ApplicationWindow {
         ? profilesModel[profileList.currentIndex]
         : null
     property bool editorDirty: false
+    property int selectedMappingIndex: -1
+    property string selectedMappingSide: "from"
     property var eventCodes: [
         "btn:south",
         "btn:east",
         "btn:west",
         "btn:north",
-        "btn:l1",
-        "btn:r1",
-        "btn:l2",
-        "btn:r2",
+        "btn:tl",
+        "btn:tr",
+        "btn:tl2",
+        "btn:tr2",
         "btn:select",
         "btn:start",
         "btn:mode",
-        "btn:l3",
-        "btn:r3",
+        "btn:thumbl",
+        "btn:thumbr",
         "abs:x",
         "abs:y",
         "abs:rx",
@@ -60,6 +62,84 @@ ApplicationWindow {
         "abs:hat0x",
         "abs:hat0y"
     ]
+    property var controllerTemplates: [
+        {
+            name: "Xbox",
+            image: "qrc:/qt/qml/com/benwbooth/padproxy/qml/images/controller-xbox.svg",
+            controls: [
+                { code: "btn:tl2", label: "LT", x: 0.22, y: 0.10, w: 0.14, h: 0.11 },
+                { code: "btn:tr2", label: "RT", x: 0.78, y: 0.10, w: 0.14, h: 0.11 },
+                { code: "btn:tl", label: "LB", x: 0.25, y: 0.22, w: 0.14, h: 0.10 },
+                { code: "btn:tr", label: "RB", x: 0.75, y: 0.22, w: 0.14, h: 0.10 },
+                { code: "abs:x", label: "LS X", x: 0.28, y: 0.43, w: 0.12, h: 0.11 },
+                { code: "abs:y", label: "LS Y", x: 0.28, y: 0.56, w: 0.12, h: 0.11 },
+                { code: "btn:thumbl", label: "L3", x: 0.28, y: 0.69, w: 0.11, h: 0.10 },
+                { code: "abs:hat0x", label: "D-X", x: 0.42, y: 0.62, w: 0.11, h: 0.10 },
+                { code: "abs:hat0y", label: "D-Y", x: 0.42, y: 0.75, w: 0.11, h: 0.10 },
+                { code: "btn:select", label: "View", x: 0.43, y: 0.43, w: 0.10, h: 0.09 },
+                { code: "btn:mode", label: "Guide", x: 0.50, y: 0.52, w: 0.10, h: 0.09 },
+                { code: "btn:start", label: "Menu", x: 0.57, y: 0.43, w: 0.10, h: 0.09 },
+                { code: "abs:rx", label: "RS X", x: 0.59, y: 0.67, w: 0.12, h: 0.11 },
+                { code: "abs:ry", label: "RS Y", x: 0.59, y: 0.80, w: 0.12, h: 0.11 },
+                { code: "btn:thumbr", label: "R3", x: 0.72, y: 0.75, w: 0.11, h: 0.10 },
+                { code: "btn:west", label: "X", x: 0.72, y: 0.43, w: 0.08, h: 0.08 },
+                { code: "btn:north", label: "Y", x: 0.80, y: 0.34, w: 0.08, h: 0.08 },
+                { code: "btn:east", label: "B", x: 0.88, y: 0.43, w: 0.08, h: 0.08 },
+                { code: "btn:south", label: "A", x: 0.80, y: 0.52, w: 0.08, h: 0.08 }
+            ]
+        },
+        {
+            name: "PlayStation",
+            image: "qrc:/qt/qml/com/benwbooth/padproxy/qml/images/controller-playstation.svg",
+            controls: [
+                { code: "btn:tl2", label: "L2", x: 0.22, y: 0.10, w: 0.14, h: 0.11 },
+                { code: "btn:tr2", label: "R2", x: 0.78, y: 0.10, w: 0.14, h: 0.11 },
+                { code: "btn:tl", label: "L1", x: 0.25, y: 0.22, w: 0.14, h: 0.10 },
+                { code: "btn:tr", label: "R1", x: 0.75, y: 0.22, w: 0.14, h: 0.10 },
+                { code: "abs:x", label: "LS X", x: 0.31, y: 0.58, w: 0.12, h: 0.11 },
+                { code: "abs:y", label: "LS Y", x: 0.31, y: 0.71, w: 0.12, h: 0.11 },
+                { code: "btn:thumbl", label: "L3", x: 0.31, y: 0.84, w: 0.11, h: 0.10 },
+                { code: "abs:hat0x", label: "D-X", x: 0.23, y: 0.43, w: 0.11, h: 0.10 },
+                { code: "abs:hat0y", label: "D-Y", x: 0.23, y: 0.56, w: 0.11, h: 0.10 },
+                { code: "btn:select", label: "Share", x: 0.42, y: 0.45, w: 0.10, h: 0.09 },
+                { code: "btn:mode", label: "PS", x: 0.50, y: 0.58, w: 0.10, h: 0.09 },
+                { code: "btn:start", label: "Options", x: 0.58, y: 0.45, w: 0.10, h: 0.09 },
+                { code: "abs:rx", label: "RS X", x: 0.69, y: 0.58, w: 0.12, h: 0.11 },
+                { code: "abs:ry", label: "RS Y", x: 0.69, y: 0.71, w: 0.12, h: 0.11 },
+                { code: "btn:thumbr", label: "R3", x: 0.69, y: 0.84, w: 0.11, h: 0.10 },
+                { code: "btn:west", label: "Square", x: 0.72, y: 0.43, w: 0.09, h: 0.08 },
+                { code: "btn:north", label: "Triangle", x: 0.80, y: 0.34, w: 0.09, h: 0.08 },
+                { code: "btn:east", label: "Circle", x: 0.88, y: 0.43, w: 0.09, h: 0.08 },
+                { code: "btn:south", label: "Cross", x: 0.80, y: 0.52, w: 0.09, h: 0.08 }
+            ]
+        },
+        {
+            name: "Generic",
+            image: "qrc:/qt/qml/com/benwbooth/padproxy/qml/images/controller-generic.svg",
+            controls: [
+                { code: "btn:tl2", label: "L2", x: 0.22, y: 0.10, w: 0.14, h: 0.11 },
+                { code: "btn:tr2", label: "R2", x: 0.78, y: 0.10, w: 0.14, h: 0.11 },
+                { code: "btn:tl", label: "L1", x: 0.25, y: 0.22, w: 0.14, h: 0.10 },
+                { code: "btn:tr", label: "R1", x: 0.75, y: 0.22, w: 0.14, h: 0.10 },
+                { code: "abs:x", label: "Left X", x: 0.29, y: 0.55, w: 0.12, h: 0.11 },
+                { code: "abs:y", label: "Left Y", x: 0.29, y: 0.68, w: 0.12, h: 0.11 },
+                { code: "btn:thumbl", label: "L3", x: 0.29, y: 0.81, w: 0.11, h: 0.10 },
+                { code: "abs:hat0x", label: "D-X", x: 0.41, y: 0.65, w: 0.11, h: 0.10 },
+                { code: "abs:hat0y", label: "D-Y", x: 0.41, y: 0.78, w: 0.11, h: 0.10 },
+                { code: "btn:select", label: "Select", x: 0.43, y: 0.45, w: 0.10, h: 0.09 },
+                { code: "btn:mode", label: "Home", x: 0.50, y: 0.55, w: 0.10, h: 0.09 },
+                { code: "btn:start", label: "Start", x: 0.57, y: 0.45, w: 0.10, h: 0.09 },
+                { code: "abs:rx", label: "Right X", x: 0.62, y: 0.65, w: 0.12, h: 0.11 },
+                { code: "abs:ry", label: "Right Y", x: 0.62, y: 0.78, w: 0.12, h: 0.11 },
+                { code: "btn:thumbr", label: "R3", x: 0.73, y: 0.81, w: 0.11, h: 0.10 },
+                { code: "btn:west", label: "West", x: 0.72, y: 0.43, w: 0.09, h: 0.08 },
+                { code: "btn:north", label: "North", x: 0.80, y: 0.34, w: 0.09, h: 0.08 },
+                { code: "btn:east", label: "East", x: 0.88, y: 0.43, w: 0.09, h: 0.08 },
+                { code: "btn:south", label: "South", x: 0.80, y: 0.52, w: 0.09, h: 0.08 }
+            ]
+        }
+    ]
+    property var controllerTemplateNames: controllerTemplates.map(function(template) { return template.name })
 
     onProfilesModelChanged: Qt.callLater(function() {
         if (root.profilesModel.length > 0 && backend.profile_yaml.length === 0)
@@ -72,6 +152,80 @@ ApplicationWindow {
 
     function capabilitiesText(values) {
         return values && values.length > 0 ? values.join(", ") : "no mapped capabilities"
+    }
+
+    function eventLabel(code) {
+        switch (code) {
+        case "btn:south": return "South / A / Cross"
+        case "btn:east": return "East / B / Circle"
+        case "btn:west": return "West / X / Square"
+        case "btn:north": return "North / Y / Triangle"
+        case "btn:tl": return "L1 / LB"
+        case "btn:tr": return "R1 / RB"
+        case "btn:tl2": return "L2 / LT"
+        case "btn:tr2": return "R2 / RT"
+        case "btn:select": return "Select / View / Share"
+        case "btn:start": return "Start / Menu / Options"
+        case "btn:mode": return "Home / Guide / PS"
+        case "btn:thumbl": return "L3"
+        case "btn:thumbr": return "R3"
+        case "abs:x": return "Left stick X"
+        case "abs:y": return "Left stick Y"
+        case "abs:rx": return "Right stick X"
+        case "abs:ry": return "Right stick Y"
+        case "abs:z": return "Left trigger axis"
+        case "abs:rz": return "Right trigger axis"
+        case "abs:hat0x": return "D-pad X"
+        case "abs:hat0y": return "D-pad Y"
+        default: return code
+        }
+    }
+
+    function currentControllerTemplate(index) {
+        if (index < 0 || index >= root.controllerTemplates.length)
+            return root.controllerTemplates[0]
+        return root.controllerTemplates[index]
+    }
+
+    function selectedMapping() {
+        if (root.selectedMappingIndex < 0 || root.selectedMappingIndex >= mappingsModel.count)
+            return null
+        return mappingsModel.get(root.selectedMappingIndex)
+    }
+
+    function ensureMappingSelection(defaultCode) {
+        if (mappingsModel.count === 0)
+            root.addMapping(defaultCode || "btn:south", defaultCode || "btn:south")
+        if (root.selectedMappingIndex < 0 || root.selectedMappingIndex >= mappingsModel.count)
+            root.selectedMappingIndex = 0
+    }
+
+    function addMapping(fromCode, toCode) {
+        mappingsModel.append({ fromCode: fromCode, toCode: toCode })
+        root.selectedMappingIndex = mappingsModel.count - 1
+    }
+
+    function updateSelectedMapping(code) {
+        root.ensureMappingSelection(code)
+        const propertyName = root.selectedMappingSide === "to" ? "toCode" : "fromCode"
+        mappingsModel.setProperty(root.selectedMappingIndex, propertyName, code)
+    }
+
+    function isSelectedMappingControl(code) {
+        const row = root.selectedMapping()
+        if (!row)
+            return false
+        return root.selectedMappingSide === "to" ? row.toCode === code : row.fromCode === code
+    }
+
+    function mappingCountFor(code, side) {
+        let total = 0
+        const propertyName = side === "to" ? "toCode" : "fromCode"
+        for (let i = 0; i < mappingsModel.count; i++) {
+            if (mappingsModel.get(i)[propertyName] === code)
+                total += 1
+        }
+        return total
     }
 
     function selectProfile(index) {
@@ -92,8 +246,9 @@ ApplicationWindow {
         passthroughCheck.checked = true
         grabSourceCheck.checked = true
         mappingsModel.clear()
-        mappingsModel.append({ fromCode: "btn:west", toCode: "btn:east" })
-        mappingsModel.append({ fromCode: "btn:east", toCode: "btn:west" })
+        root.addMapping("btn:west", "btn:east")
+        root.addMapping("btn:east", "btn:west")
+        root.selectedMappingIndex = 0
         backend.new_profile()
     }
 
@@ -114,6 +269,7 @@ ApplicationWindow {
                 })
             }
         }
+        root.selectedMappingIndex = mappingsModel.count > 0 ? 0 : -1
     }
 
     function yamlString(value) {
@@ -389,48 +545,227 @@ ApplicationWindow {
 
                                 Button {
                                     text: "Add Mapping"
-                                    onClicked: mappingsModel.append({ fromCode: "btn:south", toCode: "btn:south" })
+                                    onClicked: root.addMapping("btn:south", "btn:south")
                                 }
                             }
 
                             Frame {
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: Math.max(260, mappingsModel.count * 48 + 20)
+                                Layout.preferredHeight: Math.max(300, width * 0.48)
+
+                                ColumnLayout {
+                                    anchors.fill: parent
+                                    spacing: 8
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 8
+
+                                        Label {
+                                            text: "Controller"
+                                            font.bold: true
+                                        }
+
+                                        ComboBox {
+                                            id: controllerTemplateBox
+                                            model: root.controllerTemplateNames
+                                            Layout.preferredWidth: 180
+                                        }
+
+                                        Item {
+                                            Layout.fillWidth: true
+                                        }
+
+                                        Button {
+                                            text: "Source"
+                                            checkable: true
+                                            checked: root.selectedMappingSide === "from"
+                                            onClicked: root.selectedMappingSide = "from"
+                                        }
+
+                                        Button {
+                                            text: "Target"
+                                            checkable: true
+                                            checked: root.selectedMappingSide === "to"
+                                            onClicked: root.selectedMappingSide = "to"
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        id: controllerSurface
+                                        Layout.fillWidth: true
+                                        Layout.fillHeight: true
+                                        color: "#161a1f"
+                                        border.color: "#343b44"
+                                        radius: 6
+                                        clip: true
+
+                                        Image {
+                                            anchors.fill: parent
+                                            anchors.margins: 8
+                                            fillMode: Image.PreserveAspectFit
+                                            smooth: true
+                                            source: root.currentControllerTemplate(controllerTemplateBox.currentIndex).image
+                                        }
+
+                                        Repeater {
+                                            model: root.currentControllerTemplate(controllerTemplateBox.currentIndex).controls
+
+                                            delegate: Button {
+                                                readonly property bool activeControl: root.isSelectedMappingControl(modelData.code)
+                                                readonly property int fromCount: root.mappingCountFor(modelData.code, "from")
+                                                readonly property int toCount: root.mappingCountFor(modelData.code, "to")
+
+                                                x: controllerSurface.width * modelData.x - width / 2
+                                                y: controllerSurface.height * modelData.y - height / 2
+                                                width: Math.max(52, controllerSurface.width * modelData.w)
+                                                height: Math.max(32, controllerSurface.height * modelData.h)
+                                                text: modelData.label
+                                                display: AbstractButton.TextOnly
+                                                onClicked: root.updateSelectedMapping(modelData.code)
+
+                                                ToolTip.visible: hovered
+                                                ToolTip.text: root.eventLabel(modelData.code)
+
+                                                contentItem: Text {
+                                                    text: parent.text
+                                                    color: parent.activeControl ? "#111111" : "#f1f5f9"
+                                                    font.pixelSize: 12
+                                                    font.bold: true
+                                                    horizontalAlignment: Text.AlignHCenter
+                                                    verticalAlignment: Text.AlignVCenter
+                                                    elide: Text.ElideRight
+                                                }
+
+                                                background: Rectangle {
+                                                    radius: 5
+                                                    color: activeControl
+                                                        ? "#ffd84d"
+                                                        : (fromCount + toCount > 0 ? "#334155" : "#20262d")
+                                                    border.width: activeControl ? 2 : 1
+                                                    border.color: activeControl
+                                                        ? "#f59e0b"
+                                                        : (fromCount > 0 && toCount > 0 ? "#89b4fa" : "#56616f")
+                                                }
+
+                                                Rectangle {
+                                                    visible: parent.fromCount > 0 || parent.toCount > 0
+                                                    width: 18
+                                                    height: 18
+                                                    radius: 9
+                                                    anchors.right: parent.right
+                                                    anchors.top: parent.top
+                                                    anchors.rightMargin: -5
+                                                    anchors.topMargin: -5
+                                                    color: parent.activeControl ? "#111111" : "#ffd84d"
+                                                    border.color: "#111111"
+
+                                                    Text {
+                                                        anchors.centerIn: parent
+                                                        text: parent.parent.fromCount + parent.parent.toCount
+                                                        color: parent.parent.activeControl ? "#ffd84d" : "#111111"
+                                                        font.pixelSize: 10
+                                                        font.bold: true
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    Label {
+                                        text: root.selectedMapping()
+                                            ? "Row " + (root.selectedMappingIndex + 1) + ": "
+                                                + root.eventLabel(root.selectedMapping().fromCode)
+                                                + " -> "
+                                                + root.eventLabel(root.selectedMapping().toCode)
+                                            : "No mapping row"
+                                        elide: Text.ElideRight
+                                        Layout.fillWidth: true
+                                    }
+                                }
+                            }
+
+                            Frame {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: Math.max(220, mappingsModel.count * 48 + 20)
 
                                 ListView {
                                     id: mappingsList
                                     anchors.fill: parent
                                     clip: true
                                     model: mappingsModel
+                                    currentIndex: root.selectedMappingIndex
+                                    onCurrentIndexChanged: root.selectedMappingIndex = currentIndex
 
-                                    delegate: RowLayout {
+                                    delegate: Rectangle {
                                         width: ListView.view.width
                                         height: 44
-                                        spacing: 8
+                                        color: index === root.selectedMappingIndex ? "#263241" : "transparent"
+                                        border.color: index === root.selectedMappingIndex ? "#ffd84d" : "transparent"
+                                        radius: 4
 
-                                        ComboBox {
-                                            model: root.eventCodes
-                                            Layout.fillWidth: true
-                                            Component.onCompleted: currentIndex = Math.max(0, root.eventCodes.indexOf(fromCode))
-                                            onActivated: mappingsModel.setProperty(index, "fromCode", currentText)
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            onClicked: root.selectedMappingIndex = index
                                         }
 
-                                        Label {
-                                            text: "to"
-                                            horizontalAlignment: Text.AlignHCenter
-                                            Layout.preferredWidth: 24
-                                        }
+                                        RowLayout {
+                                            anchors.fill: parent
+                                            anchors.margins: 4
+                                            spacing: 8
 
-                                        ComboBox {
-                                            model: root.eventCodes
-                                            Layout.fillWidth: true
-                                            Component.onCompleted: currentIndex = Math.max(0, root.eventCodes.indexOf(toCode))
-                                            onActivated: mappingsModel.setProperty(index, "toCode", currentText)
-                                        }
+                                            ComboBox {
+                                                model: root.eventCodes
+                                                currentIndex: Math.max(0, root.eventCodes.indexOf(fromCode))
+                                                Layout.fillWidth: true
+                                                onPressedChanged: {
+                                                    if (pressed) {
+                                                        root.selectedMappingIndex = index
+                                                        root.selectedMappingSide = "from"
+                                                    }
+                                                }
+                                                onActivated: {
+                                                    root.selectedMappingIndex = index
+                                                    root.selectedMappingSide = "from"
+                                                    mappingsModel.setProperty(index, "fromCode", currentText)
+                                                }
+                                                ToolTip.visible: hovered
+                                                ToolTip.text: root.eventLabel(currentText)
+                                            }
 
-                                        Button {
-                                            text: "Remove"
-                                            onClicked: mappingsModel.remove(index)
+                                            Label {
+                                                text: "to"
+                                                horizontalAlignment: Text.AlignHCenter
+                                                Layout.preferredWidth: 24
+                                            }
+
+                                            ComboBox {
+                                                model: root.eventCodes
+                                                currentIndex: Math.max(0, root.eventCodes.indexOf(toCode))
+                                                Layout.fillWidth: true
+                                                onPressedChanged: {
+                                                    if (pressed) {
+                                                        root.selectedMappingIndex = index
+                                                        root.selectedMappingSide = "to"
+                                                    }
+                                                }
+                                                onActivated: {
+                                                    root.selectedMappingIndex = index
+                                                    root.selectedMappingSide = "to"
+                                                    mappingsModel.setProperty(index, "toCode", currentText)
+                                                }
+                                                ToolTip.visible: hovered
+                                                ToolTip.text: root.eventLabel(currentText)
+                                            }
+
+                                            Button {
+                                                text: "Remove"
+                                                onClicked: {
+                                                    mappingsModel.remove(index)
+                                                    if (root.selectedMappingIndex >= mappingsModel.count)
+                                                        root.selectedMappingIndex = mappingsModel.count - 1
+                                                }
+                                            }
                                         }
                                     }
                                 }
