@@ -90,8 +90,9 @@ selector edits the main layer plus up to ten shift layers, each activated by a
 hold or toggle control. Individual mapping rows can map, disable, or turbo a
 button output. The analog panel tunes virtual axes with deadzone, sensitivity,
 inversion, and output range controls. Macro rows can tap a virtual button from
-the structured editor; the raw YAML editor also supports explicit controller
-button down/up events, axis set events, and pauses. The editor shows
+the structured editor or hold a virtual button until the source is released;
+the raw YAML editor also supports explicit controller button down/up events,
+axis set events, release-side events, and pauses. The editor shows
 implemented and planned virtual outputs, but only implemented outputs can be
 applied. `Apply` starts a background remap using the selected controller and
 current profile contents; `Remap Off` stops it and removes the virtual
@@ -141,6 +142,18 @@ mappings:
         - down: btn:east
         - pause_ms: 50
         - up: btn:east
+  - from: btn:tl
+    action: macro
+    macro:
+      mode: hold
+      events:
+        - down: btn:south
+        - axis: abs:x
+          value: 12000
+      release_events:
+        - axis: abs:x
+          value: 0
+        - up: btn:south
   - from: btn:east
     to: btn:west
   - from: btn:west

@@ -1,8 +1,8 @@
 use crate::event_code::{event_from_input, virtual_xbox_supports, EventCode, EventKind};
 use crate::outputs::{output_device, supported_output_ids};
 use crate::profiles::{
-    AnalogTuning, LayerActivation, LayerActivationMode, MacroEventKind, MacroSettings, Mapping,
-    MappingAction, Profile,
+    AnalogTuning, LayerActivation, LayerActivationMode, MacroEvent, MacroEventKind, MacroMode,
+    MacroSettings, Mapping, MappingAction, Profile,
 };
 use anyhow::{anyhow, Context, Result};
 use evdev::uinput::VirtualDevice;
@@ -41,6 +41,7 @@ pub struct RemapRuntime {
     pressed_activators: HashSet<(usize, EventCode)>,
     pressed_key_targets: HashMap<EventCode, EventCode>,
     pressed_macro_sources: HashSet<EventCode>,
+    held_macro_releases: HashMap<EventCode, Vec<MacroEvent>>,
     macro_queue: VecDeque<ScheduledMacroEvent>,
     turbo_states: HashMap<EventCode, TurboState>,
     analog_tuning: HashMap<EventCode, AnalogTuning>,
@@ -173,6 +174,7 @@ impl RemapRuntime {
             pressed_activators: HashSet::new(),
             pressed_key_targets: HashMap::new(),
             pressed_macro_sources: HashSet::new(),
+            held_macro_releases: HashMap::new(),
             macro_queue: VecDeque::new(),
             turbo_states: HashMap::new(),
             analog_tuning,
@@ -281,6 +283,9 @@ impl RemapRuntime {
     ) {
         if value == 0 {
             if self.pressed_macro_sources.remove(&source_event) {
+                if let Some(release_events) = self.held_macro_releases.remove(&source_event) {
+                    self.enqueue_macro_sequence(&release_events);
+                }
                 return;
             }
 
@@ -313,9 +318,13 @@ impl RemapRuntime {
 
         let resolved = self.resolved_mapping(source_event);
         if resolved.action == MappingAction::Macro {
-            if let Some(macro_settings) = resolved.macro_settings.as_ref() {
+            if let Some(macro_settings) = resolved.macro_settings {
                 self.pressed_macro_sources.insert(source_event);
-                self.enqueue_macro_events(macro_settings);
+                self.enqueue_macro_sequence(&macro_settings.events);
+                if macro_settings.mode == MacroMode::Hold {
+                    self.held_macro_releases
+                        .insert(source_event, macro_settings.release_events);
+                }
             }
             return;
         }
@@ -361,13 +370,13 @@ impl RemapRuntime {
         push_input_event(output, resolved.target, value);
     }
 
-    fn enqueue_macro_events(&mut self, macro_settings: &MacroSettings) {
+    fn enqueue_macro_sequence(&mut self, events: &[MacroEvent]) {
         const TAP_RELEASE_MS: u64 = 20;
 
         let now = Instant::now();
         let mut offset = Duration::ZERO;
 
-        for event in &macro_settings.events {
+        for event in events {
             match event.kind {
                 MacroEventKind::Pause => {
                     offset += Duration::from_millis(event.pause_ms);

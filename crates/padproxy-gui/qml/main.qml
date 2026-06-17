@@ -408,6 +408,7 @@ ApplicationWindow {
                 fromCode: row.fromCode,
                 toCode: row.toCode,
                 action: row.action || "map",
+                macroMode: row.macroMode || "press",
                 turboEnabled: row.turboEnabled === true,
                 turboIntervalMs: root.normalizedTurboInterval(row.turboIntervalMs)
             })
@@ -426,6 +427,7 @@ ApplicationWindow {
                     ? root.macroTargetFromProfile(mappings[i])
                     : mappings[i].to_name || mappings[i].to || "btn:south",
                 action: action,
+                macroMode: action === "macro" ? root.macroModeFromProfile(mappings[i]) : "press",
                 turboEnabled: turbo !== null,
                 turboIntervalMs: turbo && turbo.interval_ms ? turbo.interval_ms : 75
             })
@@ -443,6 +445,11 @@ ApplicationWindow {
         return mapping.to_name || mapping.to || "btn:south"
     }
 
+    function macroModeFromProfile(mapping) {
+        const macro = mapping && mapping.macro ? mapping.macro : null
+        return macro && macro.mode === "hold" ? "hold" : "press"
+    }
+
     function setMappingRows(rows) {
         mappingsModel.clear()
         for (let i = 0; rows && i < rows.length; i++) {
@@ -450,6 +457,7 @@ ApplicationWindow {
                 fromCode: rows[i].fromCode || "btn:south",
                 toCode: rows[i].toCode || "btn:south",
                 action: rows[i].action || "map",
+                macroMode: rows[i].macroMode || "press",
                 turboEnabled: rows[i].turboEnabled === true,
                 turboIntervalMs: root.normalizedTurboInterval(rows[i].turboIntervalMs)
             })
@@ -631,6 +639,7 @@ ApplicationWindow {
             fromCode: fromCode,
             toCode: toCode,
             action: "map",
+            macroMode: "press",
             turboEnabled: false,
             turboIntervalMs: 75
         })
@@ -758,8 +767,16 @@ ApplicationWindow {
         } else if (action === "macro") {
             text += indent + "  action: macro\n"
             text += indent + "  macro:\n"
+            if (row.macroMode === "hold")
+                text += indent + "    mode: hold\n"
             text += indent + "    events:\n"
-            text += indent + "      - tap: " + (row.toCode || "btn:south") + "\n"
+            if (row.macroMode === "hold") {
+                text += indent + "      - down: " + (row.toCode || "btn:south") + "\n"
+                text += indent + "    release_events:\n"
+                text += indent + "      - up: " + (row.toCode || "btn:south") + "\n"
+            } else {
+                text += indent + "      - tap: " + (row.toCode || "btn:south") + "\n"
+            }
         } else {
             text += indent + "  to: " + row.toCode + "\n"
             if (row.turboEnabled === true) {
@@ -1531,7 +1548,9 @@ ApplicationWindow {
                                             if (row.action === "disable")
                                                 return prefix + " disabled"
                                             if (row.action === "macro")
-                                                return prefix + " macro tap " + root.eventLabel(row.toCode)
+                                                return prefix + " macro "
+                                                    + (row.macroMode === "hold" ? "hold " : "tap ")
+                                                    + root.eventLabel(row.toCode)
                                             return prefix + " -> " + root.eventLabel(row.toCode)
                                                 + (row.turboEnabled === true ? " turbo" : "")
                                         })()
@@ -1614,6 +1633,8 @@ ApplicationWindow {
                                                     if (nextAction === "macro"
                                                             && root.buttonEventCodes.indexOf(toCode) < 0)
                                                         mappingsModel.setProperty(index, "toCode", "btn:south")
+                                                    if (nextAction === "macro" && !macroMode)
+                                                        mappingsModel.setProperty(index, "macroMode", "press")
                                                 }
                                             }
 
@@ -1645,6 +1666,18 @@ ApplicationWindow {
                                                 }
                                                 ToolTip.visible: hovered
                                                 ToolTip.text: root.eventLabel(currentText)
+                                            }
+
+                                            CheckBox {
+                                                text: "Hold"
+                                                enabled: action === "macro"
+                                                checked: macroMode === "hold"
+                                                opacity: enabled ? 1.0 : 0.35
+                                                Layout.preferredWidth: 72
+                                                onToggled: {
+                                                    root.selectedMappingIndex = index
+                                                    mappingsModel.setProperty(index, "macroMode", checked ? "hold" : "press")
+                                                }
                                             }
 
                                             CheckBox {

@@ -75,7 +75,7 @@ Source pages consulted:
 - Rumble events.
 - Break/cancel events.
 - Execute-at-once macros. Done for press-triggered controller macros.
-- Hold-until-release macros.
+- Hold-until-release macros. Basic controller hold macros done.
 - Relative stick deflection in macros.
 - Macro duration display.
 - Stop all macros shortcut.
@@ -183,6 +183,6 @@ Source pages consulted:
 3. Add hook mode to pick source and target controls by pressing buttons. Done.
 4. Add remap ON/OFF/apply lifecycle from the GUI. Done.
 5. Add virtual output type selection and hide/grab policy controls. Done for implemented outputs; planned outputs are visible but disabled until their virtual-device backends exist.
-6. Add layers, then activators, then macros. Basic main/shift layers are done with hold/toggle activation, disable mappings, held-button turbo, and press-triggered controller macros; richer activators and macros remain.
+6. Add layers, then activators, then macros. Basic main/shift layers are done with hold/toggle activation, disable mappings, held-button turbo, press-triggered controller macros, and hold-until-release controller macros; richer activators and macros remain.
 7. Add analog tuning. Basic per-axis deadzone, sensitivity, inversion, and output range are done.
 8. Add process autodetect and Lunchbox integration.

@@ -53,12 +53,14 @@ pub struct TurboSettings {
 pub struct MacroSettings {
     pub mode: MacroMode,
     pub events: Vec<MacroEvent>,
+    pub release_events: Vec<MacroEvent>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MacroMode {
     Press,
+    Hold,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -188,6 +190,7 @@ struct RawMacroSettings {
     mode: Option<String>,
     #[serde(default)]
     events: Vec<RawMacroEvent>,
+    release_events: Option<Vec<RawMacroEvent>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -780,7 +783,7 @@ fn parse_macro_settings(
         ));
     }
 
-    let (mode, raw_events) = match (raw, raw_events) {
+    let (mode, raw_events, raw_release_events) = match (raw, raw_events) {
         (Some(_), Some(_)) => {
             return Err(anyhow!(
                 "macro mapping from {from_name} in {context} cannot use both macro and macro_events"
@@ -793,8 +796,9 @@ fn parse_macro_settings(
                 .transpose()?
                 .unwrap_or(MacroMode::Press),
             raw.events,
+            raw.release_events,
         ),
-        (None, Some(raw_events)) => (MacroMode::Press, raw_events),
+        (None, Some(raw_events)) => (MacroMode::Press, raw_events, None),
         (None, None) => {
             return Err(anyhow!(
                 "macro mapping from {from_name} in {context} requires macro events"
@@ -813,7 +817,33 @@ fn parse_macro_settings(
         events.push(parse_macro_event(raw_event, index, from_name, context)?);
     }
 
-    Ok(Some(MacroSettings { mode, events }))
+    let release_events = match (mode, raw_release_events) {
+        (MacroMode::Press, Some(_)) => {
+            return Err(anyhow!(
+                "press macro from {from_name} in {context} cannot use release_events"
+            ))
+        }
+        (MacroMode::Press, None) => Vec::new(),
+        (MacroMode::Hold, Some(raw_release_events)) => {
+            if raw_release_events.is_empty() {
+                return Err(anyhow!(
+                    "hold macro from {from_name} in {context} requires at least one release event"
+                ));
+            }
+            let mut parsed = Vec::new();
+            for (index, raw_event) in raw_release_events.into_iter().enumerate() {
+                parsed.push(parse_macro_event(raw_event, index, from_name, context)?);
+            }
+            parsed
+        }
+        (MacroMode::Hold, None) => automatic_hold_release_events(&events),
+    };
+
+    Ok(Some(MacroSettings {
+        mode,
+        events,
+        release_events,
+    }))
 }
 
 fn parse_macro_mode(value: &str) -> Result<MacroMode> {
@@ -821,8 +851,71 @@ fn parse_macro_mode(value: &str) -> Result<MacroMode> {
         "press" | "single_press" | "on_press" | "execute" | "execute_at_once" => {
             Ok(MacroMode::Press)
         }
+        "hold" | "held" | "hold_until_release" | "while_held" => Ok(MacroMode::Hold),
         other => Err(anyhow!("unknown macro mode {other}")),
     }
+}
+
+fn automatic_hold_release_events(events: &[MacroEvent]) -> Vec<MacroEvent> {
+    let mut key_order = Vec::new();
+    let mut key_down = HashMap::new();
+    let mut axis_order = Vec::new();
+    let mut axis_values = HashMap::new();
+
+    for event in events {
+        let Some(code) = event.code else {
+            continue;
+        };
+
+        match event.kind {
+            MacroEventKind::Down => {
+                if !key_order.contains(&code) {
+                    key_order.push(code);
+                }
+                key_down.insert(code, true);
+            }
+            MacroEventKind::Up => {
+                if !key_order.contains(&code) {
+                    key_order.push(code);
+                }
+                key_down.insert(code, false);
+            }
+            MacroEventKind::Axis => {
+                if !axis_order.contains(&code) {
+                    axis_order.push(code);
+                }
+                axis_values.insert(code, event.value);
+            }
+            MacroEventKind::Tap | MacroEventKind::Pause => {}
+        }
+    }
+
+    let mut release_events = Vec::new();
+    for code in key_order {
+        if key_down.get(&code).copied().unwrap_or(false) {
+            release_events.push(MacroEvent {
+                kind: MacroEventKind::Up,
+                code: Some(code),
+                code_name: code.name(),
+                value: 0,
+                pause_ms: 0,
+            });
+        }
+    }
+
+    for code in axis_order {
+        if axis_values.get(&code).copied().unwrap_or(0) != 0 {
+            release_events.push(MacroEvent {
+                kind: MacroEventKind::Axis,
+                code: Some(code),
+                code_name: code.name(),
+                value: 0,
+                pause_ms: 0,
+            });
+        }
+    }
+
+    release_events
 }
 
 fn parse_macro_event(
@@ -1344,6 +1437,7 @@ mappings:
         let macro_settings = profile.mappings[0].macro_settings.as_ref().unwrap();
         assert_eq!(macro_settings.mode, MacroMode::Press);
         assert_eq!(macro_settings.events.len(), 7);
+        assert!(macro_settings.release_events.is_empty());
         assert_eq!(macro_settings.events[0].kind, MacroEventKind::Down);
         assert_eq!(macro_settings.events[0].code_name, "btn:south");
         assert_eq!(macro_settings.events[1].kind, MacroEventKind::Pause);
@@ -1352,6 +1446,66 @@ mappings:
         assert_eq!(macro_settings.events[4].kind, MacroEventKind::Axis);
         assert_eq!(macro_settings.events[4].code_name, "abs:x");
         assert_eq!(macro_settings.events[4].value, 12000);
+    }
+
+    #[test]
+    fn parses_hold_macro_release_events() {
+        let explicit = parse_profile_bytes(
+            br#"
+id: hold-explicit
+mappings:
+  - from: btn:tl
+    action: macro
+    macro:
+      mode: hold
+      events:
+        - down: btn:south
+        - axis: abs:x
+          value: 12000
+      release_events:
+        - axis: abs:x
+          value: 0
+        - up: btn:south
+"#,
+            Path::new("hold-explicit.yaml"),
+        )
+        .unwrap();
+
+        let macro_settings = explicit.mappings[0].macro_settings.as_ref().unwrap();
+        assert_eq!(macro_settings.mode, MacroMode::Hold);
+        assert_eq!(macro_settings.events.len(), 2);
+        assert_eq!(macro_settings.release_events.len(), 2);
+        assert_eq!(macro_settings.release_events[0].kind, MacroEventKind::Axis);
+        assert_eq!(macro_settings.release_events[0].code_name, "abs:x");
+        assert_eq!(macro_settings.release_events[0].value, 0);
+        assert_eq!(macro_settings.release_events[1].kind, MacroEventKind::Up);
+        assert_eq!(macro_settings.release_events[1].code_name, "btn:south");
+
+        let automatic = parse_profile_bytes(
+            br#"
+id: hold-automatic
+mappings:
+  - from: btn:tr
+    macro:
+      mode: hold
+      events:
+        - tap: btn:east
+        - down: btn:south
+        - axis: abs:y
+          value: -15000
+"#,
+            Path::new("hold-automatic.yaml"),
+        )
+        .unwrap();
+
+        let macro_settings = automatic.mappings[0].macro_settings.as_ref().unwrap();
+        assert_eq!(macro_settings.mode, MacroMode::Hold);
+        assert_eq!(macro_settings.release_events.len(), 2);
+        assert_eq!(macro_settings.release_events[0].kind, MacroEventKind::Up);
+        assert_eq!(macro_settings.release_events[0].code_name, "btn:south");
+        assert_eq!(macro_settings.release_events[1].kind, MacroEventKind::Axis);
+        assert_eq!(macro_settings.release_events[1].code_name, "abs:y");
+        assert_eq!(macro_settings.release_events[1].value, 0);
     }
 
     #[test]
@@ -1409,6 +1563,28 @@ mappings:
         assert!(
             bad_axis_error.contains("requires value"),
             "{bad_axis_error}"
+        );
+
+        let press_release_error = parse_profile_bytes(
+            br#"
+id: press-release
+mappings:
+  - from: btn:start
+    action: macro
+    macro:
+      mode: press
+      events:
+        - tap: btn:south
+      release_events:
+        - up: btn:south
+"#,
+            Path::new("press-release.yaml"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            press_release_error.contains("cannot use release_events"),
+            "{press_release_error}"
         );
     }
 
