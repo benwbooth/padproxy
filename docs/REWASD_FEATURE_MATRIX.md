@@ -179,7 +179,7 @@ Source pages consulted:
 
 1. Replace YAML-first editing with a structured mapping editor. Done.
 2. Add clickable SVG controller images for Xbox, PlayStation, and generic pads. Done.
-3. Add hook mode to pick source and target controls by pressing buttons.
+3. Add hook mode to pick source and target controls by pressing buttons. Done.
 4. Add remap ON/OFF/apply lifecycle from the GUI.
 5. Add virtual output type selection and hide/grab policy controls.
 6. Add layers, then activators, then macros.

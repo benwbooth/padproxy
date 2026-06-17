@@ -14,6 +14,7 @@ pub mod qobject {
         #[qproperty(QString, status)]
         #[qproperty(QString, profile_yaml)]
         #[qproperty(QString, editing_profile_path)]
+        #[qproperty(QString, capture_status)]
         type PadProxyController = super::PadProxyControllerRust;
 
         #[qinvokable]
@@ -27,11 +28,22 @@ pub mod qobject {
 
         #[qinvokable]
         fn save_profile(self: Pin<&mut Self>, yaml: QString);
+
+        #[qinvokable]
+        fn start_capture(self: Pin<&mut Self>, path: QString) -> QString;
+
+        #[qinvokable]
+        fn poll_capture_event(self: Pin<&mut Self>) -> QString;
+
+        #[qinvokable]
+        fn stop_capture(self: Pin<&mut Self>);
     }
 }
 
 use core::pin::Pin;
+use cxx_qt::CxxQtType;
 use cxx_qt_lib::QString;
+use padproxy_core::capture::CaptureReader;
 use std::path::{Path, PathBuf};
 
 pub fn init_qt_static_modules() {
@@ -48,6 +60,9 @@ pub struct PadProxyControllerRust {
     status: QString,
     profile_yaml: QString,
     editing_profile_path: QString,
+    capture_status: QString,
+    capture_device_path: String,
+    capture_reader: Option<CaptureReader>,
 }
 
 impl qobject::PadProxyController {
@@ -120,6 +135,76 @@ mappings:\n\
                     .set_status(QString::from(format!("Failed to save profile: {error}")));
             }
         }
+    }
+
+    pub fn start_capture(self: Pin<&mut Self>, path: QString) -> QString {
+        let mut this = self;
+        let path = path.to_string();
+        match CaptureReader::open(&path) {
+            Ok(reader) => {
+                {
+                    let mut rust = this.as_mut().rust_mut();
+                    rust.capture_device_path = path.clone();
+                    rust.capture_reader = Some(reader);
+                }
+                this.as_mut().set_capture_status(QString::from(format!(
+                    "Listening on {}",
+                    display_device_path(&path)
+                )));
+                QString::from("ok")
+            }
+            Err(error) => {
+                {
+                    let mut rust = this.as_mut().rust_mut();
+                    rust.capture_device_path.clear();
+                    rust.capture_reader = None;
+                }
+                this.as_mut()
+                    .set_capture_status(QString::from(format!("Hook mode failed: {error}")));
+                QString::from("")
+            }
+        }
+    }
+
+    pub fn poll_capture_event(self: Pin<&mut Self>) -> QString {
+        let mut this = self;
+        let result = {
+            let mut rust = this.as_mut().rust_mut();
+            match rust.capture_reader.as_mut() {
+                Some(reader) => reader.poll(),
+                None => Ok(None),
+            }
+        };
+
+        match result {
+            Ok(Some(event)) => {
+                this.as_mut()
+                    .set_capture_status(QString::from(format!("Captured {event}")));
+                QString::from(event)
+            }
+            Ok(None) => QString::from(""),
+            Err(error) => {
+                {
+                    let mut rust = this.as_mut().rust_mut();
+                    rust.capture_device_path.clear();
+                    rust.capture_reader = None;
+                }
+                this.as_mut()
+                    .set_capture_status(QString::from(format!("Hook mode failed: {error}")));
+                QString::from("")
+            }
+        }
+    }
+
+    pub fn stop_capture(self: Pin<&mut Self>) {
+        let mut this = self;
+        {
+            let mut rust = this.as_mut().rust_mut();
+            rust.capture_device_path.clear();
+            rust.capture_reader = None;
+        }
+        this.as_mut()
+            .set_capture_status(QString::from("Hook mode off"));
     }
 }
 
@@ -213,4 +298,11 @@ fn ensure_trailing_newline(mut text: String) -> String {
         text.push('\n');
     }
     text
+}
+
+fn display_device_path(path: &str) -> String {
+    Path::new(path)
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.to_string())
 }

@@ -39,6 +39,8 @@ ApplicationWindow {
     property bool editorDirty: false
     property int selectedMappingIndex: -1
     property string selectedMappingSide: "from"
+    property bool hookListening: false
+    property string hookStatus: backend.capture_status
     property var eventCodes: [
         "btn:south",
         "btn:east",
@@ -146,12 +148,23 @@ ApplicationWindow {
             root.selectProfile(profileList.currentIndex >= 0 ? profileList.currentIndex : 0)
     })
 
+    onDevicesModelChanged: Qt.callLater(function() {
+        if (root.devicesModel.length > 0 && deviceList.currentIndex < 0)
+            deviceList.currentIndex = 0
+    })
+
     function hexId(value) {
         return Number(value).toString(16).padStart(4, "0")
     }
 
     function capabilitiesText(values) {
         return values && values.length > 0 ? values.join(", ") : "no mapped capabilities"
+    }
+
+    function selectedDevice() {
+        if (deviceList.currentIndex < 0 || deviceList.currentIndex >= root.devicesModel.length)
+            return null
+        return root.devicesModel[deviceList.currentIndex]
     }
 
     function eventLabel(code) {
@@ -209,6 +222,29 @@ ApplicationWindow {
         root.ensureMappingSelection(code)
         const propertyName = root.selectedMappingSide === "to" ? "toCode" : "fromCode"
         mappingsModel.setProperty(root.selectedMappingIndex, propertyName, code)
+    }
+
+    function startHook() {
+        root.ensureMappingSelection("btn:south")
+        const device = root.selectedDevice()
+        if (!device) {
+            root.hookStatus = "Select a controller first."
+            return
+        }
+
+        const result = backend.start_capture(device.path)
+        root.hookStatus = backend.capture_status
+        if (result === "ok") {
+            root.hookListening = true
+            hookTimer.restart()
+        }
+    }
+
+    function stopHook() {
+        hookTimer.stop()
+        root.hookListening = false
+        backend.stop_capture()
+        root.hookStatus = backend.capture_status
     }
 
     function isSelectedMappingControl(code) {
@@ -318,6 +354,24 @@ ApplicationWindow {
 
     ListModel {
         id: mappingsModel
+    }
+
+    Timer {
+        id: hookTimer
+        interval: 35
+        repeat: true
+
+        onTriggered: {
+            const code = backend.poll_capture_event()
+            if (!code || code.length === 0) {
+                root.hookStatus = backend.capture_status
+                return
+            }
+
+            if (root.eventCodes.indexOf(code) >= 0)
+                root.updateSelectedMapping(code)
+            root.stopHook()
+        }
     }
 
     header: ToolBar {
@@ -589,6 +643,14 @@ ApplicationWindow {
                                             checked: root.selectedMappingSide === "to"
                                             onClicked: root.selectedMappingSide = "to"
                                         }
+
+                                        Button {
+                                            text: root.hookListening ? "Stop" : "Listen"
+                                            enabled: root.selectedDevice() !== null
+                                            checkable: true
+                                            checked: root.hookListening
+                                            onClicked: root.hookListening ? root.stopHook() : root.startHook()
+                                        }
                                     }
 
                                     Rectangle {
@@ -679,6 +741,13 @@ ApplicationWindow {
                                                 + " -> "
                                                 + root.eventLabel(root.selectedMapping().toCode)
                                             : "No mapping row"
+                                        elide: Text.ElideRight
+                                        Layout.fillWidth: true
+                                    }
+
+                                    Label {
+                                        text: root.hookStatus
+                                        visible: text.length > 0
                                         elide: Text.ElideRight
                                         Layout.fillWidth: true
                                     }

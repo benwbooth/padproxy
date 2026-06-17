@@ -1,4 +1,4 @@
-use evdev::{AbsoluteAxisCode, EventType, KeyCode};
+use evdev::{AbsoluteAxisCode, EventType, InputEvent, KeyCode};
 use serde::Serialize;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize)]
@@ -120,6 +120,31 @@ pub fn virtual_xbox_supports(event: EventCode) -> bool {
             AbsoluteAxisCode::ABS_HAT0Y.0,
         ]
         .contains(&event.code),
+    }
+}
+
+pub fn event_from_input(event: InputEvent) -> Option<EventCode> {
+    if event.event_type() == EventType::KEY {
+        Some(EventCode {
+            kind: EventKind::Key,
+            code: event.code(),
+        })
+    } else if event.event_type() == EventType::ABSOLUTE {
+        Some(EventCode {
+            kind: EventKind::Absolute,
+            code: event.code(),
+        })
+    } else {
+        None
+    }
+}
+
+pub fn capture_event_code(event: InputEvent) -> Option<EventCode> {
+    let code = event_from_input(event)?;
+    match code.kind {
+        EventKind::Key if event.value() != 0 => Some(code),
+        EventKind::Absolute if event.value() != 0 => Some(code),
+        _ => None,
     }
 }
 

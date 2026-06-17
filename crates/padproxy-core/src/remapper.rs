@@ -1,4 +1,4 @@
-use crate::event_code::{virtual_xbox_supports, EventCode, EventKind};
+use crate::event_code::{event_from_input, virtual_xbox_supports};
 use crate::profiles::Profile;
 use anyhow::{anyhow, Context, Result};
 use evdev::uinput::VirtualDevice;
@@ -97,22 +97,6 @@ pub fn launch_with_remap(options: LaunchOptions) -> Result<i32> {
             }
             Err(error) => return Err(error).context("failed reading source events"),
         }
-    }
-}
-
-fn event_from_input(event: InputEvent) -> Option<EventCode> {
-    if event.event_type() == EventType::KEY {
-        Some(EventCode {
-            kind: EventKind::Key,
-            code: event.code(),
-        })
-    } else if event.event_type() == EventType::ABSOLUTE {
-        Some(EventCode {
-            kind: EventKind::Absolute,
-            code: event.code(),
-        })
-    } else {
-        None
     }
 }
 

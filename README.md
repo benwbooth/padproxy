@@ -83,8 +83,9 @@ Profiles are loaded from:
 
 The Qt UI can create and edit profiles from the Profiles pane. `New` starts a
 structured profile, the `Mappings` tab can edit rows through dropdowns or the
-Xbox/PlayStation/generic controller templates, and the `YAML` tab remains
-available for raw edits. `Save` writes the result to
+Xbox/PlayStation/generic controller templates, and `Listen` can fill the active
+source or target control from the selected physical controller. The `YAML` tab
+remains available for raw edits. `Save` writes the result to
 `~/.config/padproxy/profiles.d`. Packaged profiles are read-only; saving one
 creates a user copy with the same profile id.
 
