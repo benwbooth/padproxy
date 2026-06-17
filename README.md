@@ -85,11 +85,13 @@ Profiles are loaded from:
 The Qt UI can create and edit profiles from the Profiles pane. `New` starts a
 structured profile, the `Mappings` tab can edit rows through dropdowns or the
 Xbox/PlayStation/generic controller templates, and `Listen` can fill the active
-source or target control from the selected physical controller. The editor shows
-implemented and planned virtual outputs, but only implemented outputs can be
-applied. `Apply` starts a background remap using the selected controller and
-current profile contents; `Remap Off` stops it and removes the virtual
-controller. The `YAML` tab remains available for raw edits. `Save` writes the result to
+source or target control from the selected physical controller. The layer
+selector edits the main layer plus up to ten shift layers, each activated by a
+hold or toggle control. The editor shows implemented and planned virtual
+outputs, but only implemented outputs can be applied. `Apply` starts a
+background remap using the selected controller and current profile contents;
+`Remap Off` stops it and removes the virtual controller. The `YAML` tab remains
+available for raw edits. `Save` writes the result to
 `~/.config/padproxy/profiles.d`. Packaged profiles are read-only; saving one
 creates a user copy with the same profile id.
 
@@ -119,4 +121,30 @@ mappings:
     to: btn:east
   - from: btn:north
     to: btn:north
+```
+
+Layered profiles can keep a flat top-level `mappings:` section for the main
+layer, or use nested `layers:` entries. Shift-layer activation controls are
+consumed by default so they do not leak to the virtual controller:
+
+```yaml
+id: layered-example
+name: Layered example
+output:
+  type: xbox360
+layers:
+  - id: main
+    name: Main
+    mappings:
+      - from: btn:south
+        to: btn:south
+  - id: shift_1
+    name: Shift 1
+    activation:
+      mode: hold
+      control: btn:tl
+      consume: true
+    mappings:
+      - from: btn:south
+        to: btn:east
 ```

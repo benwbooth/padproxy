@@ -182,6 +182,6 @@ Source pages consulted:
 3. Add hook mode to pick source and target controls by pressing buttons. Done.
 4. Add remap ON/OFF/apply lifecycle from the GUI. Done.
 5. Add virtual output type selection and hide/grab policy controls. Done for implemented outputs; planned outputs are visible but disabled until their virtual-device backends exist.
-6. Add layers, then activators, then macros.
+6. Add layers, then activators, then macros. Basic main/shift layers are done with hold/toggle activation; richer activators and macros remain.
 7. Add analog tuning.
 8. Add process autodetect and Lunchbox integration.

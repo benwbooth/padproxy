@@ -43,6 +43,8 @@ ApplicationWindow {
         ? profilesModel[profileList.currentIndex]
         : null
     property bool editorDirty: false
+    property int selectedLayerIndex: 0
+    property var layerMappings: []
     property int selectedMappingIndex: -1
     property string selectedMappingSide: "from"
     property bool hookListening: false
@@ -54,6 +56,10 @@ ApplicationWindow {
     property var unmappedControlOptions: [
         { label: "Pass unmapped controls", passthrough: true },
         { label: "Drop unmapped controls", passthrough: false }
+    ]
+    property var activationModeOptions: [
+        { label: "Hold", mode: "hold" },
+        { label: "Toggle", mode: "toggle" }
     ]
     property var eventCodes: [
         "btn:south",
@@ -233,6 +239,177 @@ ApplicationWindow {
         return root.unmappedControlOptions[index] ? root.unmappedControlOptions[index].passthrough : true
     }
 
+    function activationModeIndex(mode) {
+        const normalized = mode || "hold"
+        for (let i = 0; i < root.activationModeOptions.length; i++) {
+            if (root.activationModeOptions[i].mode === normalized)
+                return i
+        }
+        return 0
+    }
+
+    function currentActivationMode() {
+        const index = activationModeBox.currentIndex
+        return root.activationModeOptions[index] ? root.activationModeOptions[index].mode : "hold"
+    }
+
+    function sanitizeLayerId(value, fallback) {
+        const normalized = String(value || fallback || "shift_1")
+            .trim()
+            .toLowerCase()
+            .replace(/[\s-]+/g, "_")
+            .replace(/[^a-z0-9_]/g, "")
+        return normalized.length > 0 ? normalized : fallback
+    }
+
+    function mappingRowsFromModel() {
+        const rows = []
+        for (let i = 0; i < mappingsModel.count; i++) {
+            const row = mappingsModel.get(i)
+            rows.push({ fromCode: row.fromCode, toCode: row.toCode })
+        }
+        return rows
+    }
+
+    function mappingRowsFromProfile(mappings) {
+        const rows = []
+        for (let i = 0; mappings && i < mappings.length; i++) {
+            rows.push({
+                fromCode: mappings[i].from_name || mappings[i].from || "btn:south",
+                toCode: mappings[i].to_name || mappings[i].to || "btn:south"
+            })
+        }
+        return rows
+    }
+
+    function setMappingRows(rows) {
+        mappingsModel.clear()
+        for (let i = 0; rows && i < rows.length; i++) {
+            mappingsModel.append({
+                fromCode: rows[i].fromCode || "btn:south",
+                toCode: rows[i].toCode || "btn:south"
+            })
+        }
+        root.selectedMappingIndex = mappingsModel.count > 0 ? 0 : -1
+    }
+
+    function addLayer(layerId, layerName, activationMode, activationControl, consumeActivation, rows) {
+        layersModel.append({
+            layerId: layerId,
+            layerName: layerName,
+            activationMode: activationMode || "hold",
+            activationControl: activationControl || "btn:tl",
+            consumeActivation: consumeActivation !== false
+        })
+        const mappings = []
+        for (let i = 0; rows && i < rows.length; i++)
+            mappings.push({ fromCode: rows[i].fromCode, toCode: rows[i].toCode })
+        root.layerMappings.push(mappings)
+    }
+
+    function resetLayers(mainRows) {
+        layersModel.clear()
+        root.layerMappings = []
+        root.addLayer("main", "Main", "hold", "btn:tl", true, mainRows || [])
+        root.selectedLayerIndex = 0
+        root.setMappingRows(root.layerMappings[0])
+        Qt.callLater(root.loadCurrentLayerFields)
+    }
+
+    function currentLayer() {
+        if (root.selectedLayerIndex < 0 || root.selectedLayerIndex >= layersModel.count)
+            return null
+        return layersModel.get(root.selectedLayerIndex)
+    }
+
+    function currentLayerIsMain() {
+        const layer = root.currentLayer()
+        return !layer || layer.layerId === "main" || root.selectedLayerIndex === 0
+    }
+
+    function syncCurrentLayerMappings() {
+        if (root.selectedLayerIndex < 0)
+            return
+        root.layerMappings[root.selectedLayerIndex] = root.mappingRowsFromModel()
+    }
+
+    function syncCurrentLayerMetadata() {
+        if (root.selectedLayerIndex < 0 || root.selectedLayerIndex >= layersModel.count)
+            return
+
+        if (root.currentLayerIsMain()) {
+            layersModel.setProperty(root.selectedLayerIndex, "layerId", "main")
+            layersModel.setProperty(root.selectedLayerIndex, "layerName", "Main")
+            return
+        }
+
+        const fallback = "shift_" + root.selectedLayerIndex
+        layersModel.setProperty(
+            root.selectedLayerIndex,
+            "layerId",
+            root.sanitizeLayerId(layerIdField.text, fallback)
+        )
+        layersModel.setProperty(
+            root.selectedLayerIndex,
+            "layerName",
+            layerNameField.text.trim() || fallback.replace("_", " ")
+        )
+        layersModel.setProperty(root.selectedLayerIndex, "activationMode", root.currentActivationMode())
+        layersModel.setProperty(
+            root.selectedLayerIndex,
+            "activationControl",
+            activationControlBox.currentText || "btn:tl"
+        )
+        layersModel.setProperty(
+            root.selectedLayerIndex,
+            "consumeActivation",
+            consumeActivationCheck.checked
+        )
+    }
+
+    function loadCurrentLayerFields() {
+        const layer = root.currentLayer()
+        if (!layer)
+            return
+        layerBox.currentIndex = root.selectedLayerIndex
+        layerIdField.text = layer.layerId || "main"
+        layerNameField.text = layer.layerName || layer.layerId || "Main"
+        activationModeBox.currentIndex = root.activationModeIndex(layer.activationMode)
+        activationControlBox.currentIndex = Math.max(0, root.eventCodes.indexOf(layer.activationControl || "btn:tl"))
+        consumeActivationCheck.checked = layer.consumeActivation !== false
+    }
+
+    function selectLayerIndex(index) {
+        if (index < 0 || index >= layersModel.count)
+            return
+        root.syncCurrentLayerMetadata()
+        root.syncCurrentLayerMappings()
+        root.selectedLayerIndex = index
+        root.setMappingRows(root.layerMappings[index])
+        root.loadCurrentLayerFields()
+    }
+
+    function addShiftLayer() {
+        root.syncCurrentLayerMetadata()
+        root.syncCurrentLayerMappings()
+        if (layersModel.count >= 11) {
+            root.hookStatus = "Profiles support up to 10 shift layers."
+            return
+        }
+        const number = layersModel.count
+        root.addLayer("shift_" + number, "Shift " + number, "hold", "btn:tl", true, [])
+        root.selectLayerIndex(layersModel.count - 1)
+    }
+
+    function removeCurrentLayer() {
+        if (root.currentLayerIsMain())
+            return
+        const index = root.selectedLayerIndex
+        layersModel.remove(index)
+        root.layerMappings.splice(index, 1)
+        root.selectLayerIndex(Math.max(0, index - 1))
+    }
+
     function eventLabel(code) {
         switch (code) {
         case "btn:south": return "South / A / Cross"
@@ -347,10 +524,10 @@ ApplicationWindow {
         outputTypeBox.currentIndex = root.outputIndex("xbox360")
         sourceVisibilityBox.currentIndex = root.sourceVisibilityIndex(true)
         unmappedControlBox.currentIndex = root.unmappedControlIndex(true)
-        mappingsModel.clear()
-        root.addMapping("btn:west", "btn:east")
-        root.addMapping("btn:east", "btn:west")
-        root.selectedMappingIndex = 0
+        root.resetLayers([
+            { fromCode: "btn:west", toCode: "btn:east" },
+            { fromCode: "btn:east", toCode: "btn:west" }
+        ])
         backend.new_profile()
     }
 
@@ -362,16 +539,27 @@ ApplicationWindow {
         outputTypeBox.currentIndex = root.outputIndex(profile.output_type || "xbox360")
         sourceVisibilityBox.currentIndex = root.sourceVisibilityIndex(profile.grab_source !== false)
         unmappedControlBox.currentIndex = root.unmappedControlIndex(profile.passthrough !== false)
-        mappingsModel.clear()
-        if (profile.mappings) {
-            for (let i = 0; i < profile.mappings.length; i++) {
-                mappingsModel.append({
-                    fromCode: profile.mappings[i].from_name,
-                    toCode: profile.mappings[i].to_name
-                })
+        layersModel.clear()
+        root.layerMappings = []
+        if (profile.layers && profile.layers.length > 0) {
+            for (let i = 0; i < profile.layers.length; i++) {
+                const layer = profile.layers[i]
+                const activation = layer.activation || {}
+                root.addLayer(
+                    layer.id || (i === 0 ? "main" : "shift_" + i),
+                    layer.name || (i === 0 ? "Main" : "Shift " + i),
+                    activation.mode || "hold",
+                    activation.control_name || "btn:tl",
+                    activation.consume !== false,
+                    root.mappingRowsFromProfile(layer.mappings)
+                )
             }
+        } else {
+            root.addLayer("main", "Main", "hold", "btn:tl", true, root.mappingRowsFromProfile(profile.mappings))
         }
-        root.selectedMappingIndex = mappingsModel.count > 0 ? 0 : -1
+        root.selectedLayerIndex = 0
+        root.setMappingRows(root.layerMappings[0])
+        Qt.callLater(root.loadCurrentLayerFields)
     }
 
     function yamlString(value) {
@@ -379,6 +567,8 @@ ApplicationWindow {
     }
 
     function structuredProfileYaml() {
+        root.syncCurrentLayerMetadata()
+        root.syncCurrentLayerMappings()
         let text = ""
         text += "id: " + yamlString(profileIdField.text.trim() || "my-layout") + "\n"
         text += "name: " + yamlString(profileNameField.text.trim() || profileIdField.text.trim() || "My layout") + "\n"
@@ -389,14 +579,39 @@ ApplicationWindow {
         text += "  type: " + root.currentOutputId() + "\n"
         text += "passthrough: " + (root.currentPassthrough() ? "true" : "false") + "\n"
         text += "grab_source: " + (root.currentGrabSource() ? "true" : "false") + "\n"
-        if (mappingsModel.count === 0) {
-            text += "mappings: []\n"
+        if (layersModel.count <= 1) {
+            const rows = root.layerMappings[0] || []
+            if (rows.length === 0) {
+                text += "mappings: []\n"
+            } else {
+                text += "mappings:\n"
+                for (let i = 0; i < rows.length; i++) {
+                    text += "  - from: " + rows[i].fromCode + "\n"
+                    text += "    to: " + rows[i].toCode + "\n"
+                }
+            }
         } else {
-            text += "mappings:\n"
-            for (let i = 0; i < mappingsModel.count; i++) {
-                const row = mappingsModel.get(i)
-                text += "  - from: " + row.fromCode + "\n"
-                text += "    to: " + row.toCode + "\n"
+            text += "layers:\n"
+            for (let i = 0; i < layersModel.count; i++) {
+                const layer = layersModel.get(i)
+                const rows = root.layerMappings[i] || []
+                text += "  - id: " + root.sanitizeLayerId(layer.layerId, i === 0 ? "main" : "shift_" + i) + "\n"
+                text += "    name: " + yamlString(layer.layerName || (i === 0 ? "Main" : "Shift " + i)) + "\n"
+                if (i > 0) {
+                    text += "    activation:\n"
+                    text += "      mode: " + (layer.activationMode || "hold") + "\n"
+                    text += "      control: " + (layer.activationControl || "btn:tl") + "\n"
+                    text += "      consume: " + (layer.consumeActivation !== false ? "true" : "false") + "\n"
+                }
+                if (rows.length === 0) {
+                    text += "    mappings: []\n"
+                } else {
+                    text += "    mappings:\n"
+                    for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+                        text += "      - from: " + rows[rowIndex].fromCode + "\n"
+                        text += "        to: " + rows[rowIndex].toCode + "\n"
+                    }
+                }
             }
         }
         return text
@@ -439,6 +654,10 @@ ApplicationWindow {
 
     ListModel {
         id: mappingsModel
+    }
+
+    ListModel {
+        id: layersModel
     }
 
     Timer {
@@ -711,6 +930,93 @@ ApplicationWindow {
                                     model: root.unmappedControlOptions
                                     textRole: "label"
                                     Layout.fillWidth: true
+                                }
+                            }
+
+                            Frame {
+                                Layout.fillWidth: true
+
+                                ColumnLayout {
+                                    anchors.fill: parent
+                                    spacing: 8
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+
+                                        Label {
+                                            text: "Layer"
+                                            font.bold: true
+                                        }
+
+                                        ComboBox {
+                                            id: layerBox
+                                            model: layersModel
+                                            textRole: "layerName"
+                                            Layout.fillWidth: true
+                                            onActivated: function(index) {
+                                                root.selectLayerIndex(index)
+                                            }
+                                        }
+
+                                        Button {
+                                            text: "Add Shift"
+                                            enabled: layersModel.count < 11
+                                            onClicked: root.addShiftLayer()
+                                        }
+
+                                        Button {
+                                            text: "Remove"
+                                            enabled: !root.currentLayerIsMain()
+                                            onClicked: root.removeCurrentLayer()
+                                        }
+                                    }
+
+                                    GridLayout {
+                                        visible: !root.currentLayerIsMain()
+                                        columns: 2
+                                        columnSpacing: 10
+                                        rowSpacing: 8
+                                        Layout.fillWidth: true
+
+                                        Label { text: "Layer ID" }
+                                        TextField {
+                                            id: layerIdField
+                                            Layout.fillWidth: true
+                                            onEditingFinished: root.syncCurrentLayerMetadata()
+                                        }
+
+                                        Label { text: "Name" }
+                                        TextField {
+                                            id: layerNameField
+                                            Layout.fillWidth: true
+                                            onEditingFinished: root.syncCurrentLayerMetadata()
+                                        }
+
+                                        Label { text: "Activation" }
+                                        ComboBox {
+                                            id: activationModeBox
+                                            model: root.activationModeOptions
+                                            textRole: "label"
+                                            Layout.fillWidth: true
+                                            onActivated: root.syncCurrentLayerMetadata()
+                                        }
+
+                                        Label { text: "Control" }
+                                        ComboBox {
+                                            id: activationControlBox
+                                            model: root.eventCodes
+                                            Layout.fillWidth: true
+                                            onActivated: root.syncCurrentLayerMetadata()
+                                        }
+
+                                        Label { text: "Activator input" }
+                                        CheckBox {
+                                            id: consumeActivationCheck
+                                            text: "Do not pass activator through"
+                                            checked: true
+                                            onToggled: root.syncCurrentLayerMetadata()
+                                        }
+                                    }
                                 }
                             }
 

@@ -1,13 +1,13 @@
-use crate::event_code::{event_from_input, virtual_xbox_supports, EventCode};
+use crate::event_code::{event_from_input, virtual_xbox_supports, EventCode, EventKind};
 use crate::outputs::{output_device, supported_output_ids};
-use crate::profiles::Profile;
+use crate::profiles::{LayerActivation, LayerActivationMode, Profile};
 use anyhow::{anyhow, Context, Result};
 use evdev::uinput::VirtualDevice;
 use evdev::{
     AbsInfo, AbsoluteAxisCode, AttributeSet, BusType, Device, EventType, InputEvent, InputId,
     KeyCode, UinputAbsSetup,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{thread, time::Duration};
@@ -31,8 +31,17 @@ pub struct RemapRuntime {
     profile: Profile,
     source: Device,
     virtual_pad: VirtualDevice,
-    mappings: HashMap<EventCode, EventCode>,
+    layers: Vec<RuntimeLayer>,
+    held_layers: HashSet<usize>,
+    toggled_layers: HashSet<usize>,
+    pressed_activators: HashSet<(usize, EventCode)>,
+    pressed_key_targets: HashMap<EventCode, EventCode>,
     virtual_nodes: Vec<String>,
+}
+
+struct RuntimeLayer {
+    activation: Option<LayerActivation>,
+    mappings: HashMap<EventCode, EventCode>,
 }
 
 pub fn launch_with_remap(options: LaunchOptions) -> Result<i32> {
@@ -113,13 +122,25 @@ impl RemapRuntime {
             source.grab().context("failed to grab source device")?;
         }
 
-        let mappings = options.profile.mapping_table();
+        let layers = options
+            .profile
+            .layers
+            .iter()
+            .map(|layer| RuntimeLayer {
+                activation: layer.activation.clone(),
+                mappings: layer.mapping_table(),
+            })
+            .collect();
 
         Ok(Self {
             profile: options.profile,
             source,
             virtual_pad,
-            mappings,
+            layers,
+            held_layers: HashSet::new(),
+            toggled_layers: HashSet::new(),
+            pressed_activators: HashSet::new(),
+            pressed_key_targets: HashMap::new(),
             virtual_nodes,
         })
     }
@@ -129,46 +150,124 @@ impl RemapRuntime {
     }
 
     pub fn pump_once(&mut self) -> Result<()> {
-        match self.source.fetch_events() {
-            Ok(events) => {
-                let mut output = Vec::new();
-                for event in events {
-                    if event.event_type() == EventType::SYNCHRONIZATION {
-                        continue;
-                    }
-
-                    let Some(source_event) = event_from_input(event) else {
-                        continue;
-                    };
-
-                    let target_event = self
-                        .mappings
-                        .get(&source_event)
-                        .copied()
-                        .unwrap_or(source_event);
-                    if (!self.profile.passthrough && !self.mappings.contains_key(&source_event))
-                        || !virtual_xbox_supports(target_event)
-                    {
-                        continue;
-                    }
-
-                    output.push(InputEvent::new(
-                        target_event.event_type().0,
-                        target_event.code,
-                        event.value(),
-                    ));
-                }
-
-                if !output.is_empty() {
-                    self.virtual_pad.emit(&output)?;
-                }
-            }
+        let events = match self.source.fetch_events() {
+            Ok(events) => events.collect::<Vec<_>>(),
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 thread::sleep(Duration::from_millis(5));
+                return Ok(());
             }
             Err(error) => return Err(error).context("failed reading source events"),
+        };
+
+        let mut output = Vec::new();
+        for event in events {
+            if event.event_type() == EventType::SYNCHRONIZATION {
+                continue;
+            }
+
+            let Some(source_event) = event_from_input(event) else {
+                continue;
+            };
+
+            if self.update_layer_activation(source_event, event.value()) {
+                continue;
+            }
+
+            let Some(target_event) = self.resolve_target_event(source_event, event.value()) else {
+                continue;
+            };
+
+            output.push(InputEvent::new(
+                target_event.event_type().0,
+                target_event.code,
+                event.value(),
+            ));
         }
+
+        if !output.is_empty() {
+            self.virtual_pad.emit(&output)?;
+        }
+
         Ok(())
+    }
+
+    fn update_layer_activation(&mut self, source_event: EventCode, value: i32) -> bool {
+        let mut consumed = false;
+        for (index, layer) in self.layers.iter().enumerate().skip(1) {
+            let Some(activation) = &layer.activation else {
+                continue;
+            };
+            if activation.control != source_event {
+                continue;
+            }
+
+            consumed |= activation.consume;
+            match activation.mode {
+                LayerActivationMode::Hold => {
+                    if value == 0 {
+                        self.held_layers.remove(&index);
+                    } else {
+                        self.held_layers.insert(index);
+                    }
+                }
+                LayerActivationMode::Toggle => {
+                    if value == 0 {
+                        self.pressed_activators.remove(&(index, source_event));
+                    } else if self.pressed_activators.insert((index, source_event)) {
+                        if !self.toggled_layers.remove(&index) {
+                            self.toggled_layers.insert(index);
+                        }
+                    }
+                }
+            }
+        }
+        consumed
+    }
+
+    fn resolve_target_event(&mut self, source_event: EventCode, value: i32) -> Option<EventCode> {
+        if source_event.kind == EventKind::Key {
+            if value == 0 {
+                let target_event = self
+                    .pressed_key_targets
+                    .remove(&source_event)
+                    .unwrap_or_else(|| self.mapped_event(source_event).0);
+                return virtual_xbox_supports(target_event).then_some(target_event);
+            }
+
+            if let Some(target_event) = self.pressed_key_targets.get(&source_event).copied() {
+                return virtual_xbox_supports(target_event).then_some(target_event);
+            }
+        }
+
+        let (target_event, mapped) = self.mapped_event(source_event);
+        if (!self.profile.passthrough && !mapped) || !virtual_xbox_supports(target_event) {
+            return None;
+        }
+
+        if source_event.kind == EventKind::Key {
+            self.pressed_key_targets.insert(source_event, target_event);
+        }
+
+        Some(target_event)
+    }
+
+    fn mapped_event(&self, source_event: EventCode) -> (EventCode, bool) {
+        let layer = &self.layers[self.active_layer_index()];
+        layer
+            .mappings
+            .get(&source_event)
+            .copied()
+            .map(|target| (target, true))
+            .unwrap_or((source_event, false))
+    }
+
+    fn active_layer_index(&self) -> usize {
+        for index in (1..self.layers.len()).rev() {
+            if self.held_layers.contains(&index) || self.toggled_layers.contains(&index) {
+                return index;
+            }
+        }
+        0
     }
 }
 

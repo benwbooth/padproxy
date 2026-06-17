@@ -8,6 +8,9 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+pub const MAIN_LAYER_ID: &str = "main";
+pub const MAX_SHIFT_LAYERS: usize = 10;
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct DeviceMatch {
     pub name: Option<String>,
@@ -28,6 +31,29 @@ pub struct Mapping {
     pub to_name: String,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LayerActivationMode {
+    Hold,
+    Toggle,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct LayerActivation {
+    pub mode: LayerActivationMode,
+    pub control: EventCode,
+    pub control_name: String,
+    pub consume: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct Layer {
+    pub id: String,
+    pub name: String,
+    pub activation: Option<LayerActivation>,
+    pub mappings: Vec<Mapping>,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct Profile {
     pub id: String,
@@ -39,6 +65,7 @@ pub struct Profile {
     pub grab_source: bool,
     pub source_path: PathBuf,
     pub mappings: Vec<Mapping>,
+    pub layers: Vec<Layer>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -52,6 +79,7 @@ struct RawProfile {
     passthrough: Option<bool>,
     grab_source: Option<bool>,
     mappings: Option<Vec<RawMapping>>,
+    layers: Option<Vec<RawLayer>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -65,6 +93,34 @@ enum RawOutput {
 struct RawMapping {
     from: String,
     to: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawLayer {
+    id: Option<String>,
+    name: Option<String>,
+    activation: Option<RawLayerActivation>,
+    activator: Option<RawLayerActivation>,
+    mappings: Option<Vec<RawMapping>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum RawLayerActivation {
+    Scalar(String),
+    Object(RawLayerActivationObject),
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawLayerActivationObject {
+    mode: Option<String>,
+    control: Option<String>,
+    from: Option<String>,
+    source: Option<String>,
+    button: Option<String>,
+    hold: Option<String>,
+    toggle: Option<String>,
+    consume: Option<bool>,
 }
 
 impl IdValue {
@@ -177,6 +233,23 @@ impl DeviceMatch {
 
 impl Profile {
     pub fn mapping_table(&self) -> HashMap<EventCode, EventCode> {
+        self.main_layer().mapping_table()
+    }
+
+    pub fn main_layer(&self) -> &Layer {
+        self.layers
+            .iter()
+            .find(|layer| layer.id == MAIN_LAYER_ID)
+            .unwrap_or_else(|| {
+                self.layers
+                    .first()
+                    .expect("parsed profiles always contain a main layer")
+            })
+    }
+}
+
+impl Layer {
+    pub fn mapping_table(&self) -> HashMap<EventCode, EventCode> {
         self.mappings
             .iter()
             .map(|mapping| (mapping.from, mapping.to))
@@ -272,25 +345,66 @@ pub fn parse_profile_bytes(bytes: &[u8], source_path: &Path) -> Result<Profile> 
     };
     let output_type = normalize_output_type(&output_type);
 
-    let mut mappings = Vec::new();
-    for mapping in raw.mappings.unwrap_or_default() {
-        let from = parse_event_code(&mapping.from)
-            .ok_or_else(|| anyhow!("unknown source event {}", mapping.from))?;
-        let to = parse_event_code(&mapping.to)
-            .ok_or_else(|| anyhow!("unknown target event {}", mapping.to))?;
-        if !virtual_xbox_supports(to) {
-            return Err(anyhow!(
-                "target event {} is not supported by the current virtual pad",
-                mapping.to
-            ));
+    let mut layers = Vec::new();
+    layers.push(Layer {
+        id: MAIN_LAYER_ID.to_string(),
+        name: "Main".to_string(),
+        activation: None,
+        mappings: parse_mappings(raw.mappings, "top-level mappings")?,
+    });
+
+    for (index, layer) in raw.layers.unwrap_or_default().into_iter().enumerate() {
+        let fallback_id = format!("shift_{}", index + 1);
+        let id = normalize_layer_id(
+            layer
+                .id
+                .as_deref()
+                .or(layer.name.as_deref())
+                .unwrap_or(&fallback_id),
+        )?;
+        let name = layer.name.unwrap_or_else(|| {
+            if id == MAIN_LAYER_ID {
+                "Main".to_string()
+            } else {
+                id.replace('_', " ")
+            }
+        });
+        let activation = layer.activation.or(layer.activator);
+        let mappings = parse_mappings(layer.mappings, &format!("layer {id} mappings"))?;
+
+        if id == MAIN_LAYER_ID {
+            if activation.is_some() {
+                return Err(anyhow!("main layer cannot have an activation control"));
+            }
+            layers[0].name = name;
+            layers[0].mappings.extend(mappings);
+            continue;
         }
-        mappings.push(Mapping {
-            from,
-            to,
-            from_name: from.name(),
-            to_name: to.name(),
+
+        if layers.iter().any(|existing| existing.id == id) {
+            return Err(anyhow!("duplicate layer id {id}"));
+        }
+
+        let activation = parse_layer_activation(
+            activation.ok_or_else(|| anyhow!("layer {id} requires activation"))?,
+            &id,
+        )?;
+
+        layers.push(Layer {
+            id,
+            name,
+            activation: Some(activation),
+            mappings,
         });
     }
+
+    if layers.len().saturating_sub(1) > MAX_SHIFT_LAYERS {
+        return Err(anyhow!(
+            "profiles support up to {MAX_SHIFT_LAYERS} shift layers"
+        ));
+    }
+
+    let mappings = layers[0].mappings.clone();
 
     Ok(Profile {
         id,
@@ -302,5 +416,186 @@ pub fn parse_profile_bytes(bytes: &[u8], source_path: &Path) -> Result<Profile> 
         grab_source: raw.grab_source.unwrap_or(true),
         source_path: source_path.to_path_buf(),
         mappings,
+        layers,
     })
+}
+
+fn parse_mappings(mappings: Option<Vec<RawMapping>>, context: &str) -> Result<Vec<Mapping>> {
+    let mut parsed = Vec::new();
+    for mapping in mappings.unwrap_or_default() {
+        let from = parse_event_code(&mapping.from)
+            .ok_or_else(|| anyhow!("unknown source event {} in {context}", mapping.from))?;
+        let to = parse_event_code(&mapping.to)
+            .ok_or_else(|| anyhow!("unknown target event {} in {context}", mapping.to))?;
+        if !virtual_xbox_supports(to) {
+            return Err(anyhow!(
+                "target event {} in {context} is not supported by the current virtual pad",
+                mapping.to
+            ));
+        }
+        parsed.push(Mapping {
+            from,
+            to,
+            from_name: from.name(),
+            to_name: to.name(),
+        });
+    }
+    Ok(parsed)
+}
+
+fn parse_layer_activation(raw: RawLayerActivation, layer_id: &str) -> Result<LayerActivation> {
+    let (mode, control, consume) = match raw {
+        RawLayerActivation::Scalar(control) => (LayerActivationMode::Hold, control, true),
+        RawLayerActivation::Object(object) => {
+            let mut mode = object
+                .mode
+                .as_deref()
+                .map(parse_activation_mode)
+                .transpose()?
+                .unwrap_or(LayerActivationMode::Hold);
+            let mut control = object
+                .control
+                .or(object.from)
+                .or(object.source)
+                .or(object.button);
+
+            if let Some(hold) = object.hold {
+                mode = LayerActivationMode::Hold;
+                control = Some(hold);
+            }
+            if let Some(toggle) = object.toggle {
+                mode = LayerActivationMode::Toggle;
+                control = Some(toggle);
+            }
+
+            (
+                mode,
+                control.ok_or_else(|| anyhow!("layer {layer_id} activation requires a control"))?,
+                object.consume.unwrap_or(true),
+            )
+        }
+    };
+
+    let control = parse_event_code(&control)
+        .ok_or_else(|| anyhow!("unknown activation control {control} for layer {layer_id}"))?;
+
+    Ok(LayerActivation {
+        mode,
+        control,
+        control_name: control.name(),
+        consume,
+    })
+}
+
+fn parse_activation_mode(value: &str) -> Result<LayerActivationMode> {
+    match value
+        .trim()
+        .to_ascii_lowercase()
+        .replace([' ', '-'], "_")
+        .as_str()
+    {
+        "hold" | "held" | "momentary" | "while_held" => Ok(LayerActivationMode::Hold),
+        "toggle" | "toggles" | "on_off" => Ok(LayerActivationMode::Toggle),
+        other => Err(anyhow!("unknown layer activation mode {other}")),
+    }
+}
+
+fn normalize_layer_id(value: &str) -> Result<String> {
+    let normalized = value
+        .trim()
+        .to_ascii_lowercase()
+        .replace([' ', '-'], "_")
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric() || *character == '_')
+        .collect::<String>();
+    if normalized.is_empty() {
+        return Err(anyhow!(
+            "layer id must contain at least one letter or number"
+        ));
+    }
+    Ok(normalized)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_profile_bytes, LayerActivationMode, MAIN_LAYER_ID, MAX_SHIFT_LAYERS};
+    use std::path::Path;
+
+    #[test]
+    fn flat_mappings_become_main_layer() {
+        let profile = parse_profile_bytes(
+            br#"
+id: flat
+mappings:
+  - from: btn:south
+    to: btn:east
+"#,
+            Path::new("flat.yaml"),
+        )
+        .unwrap();
+
+        assert_eq!(profile.layers.len(), 1);
+        assert_eq!(profile.layers[0].id, MAIN_LAYER_ID);
+        assert_eq!(profile.mappings.len(), 1);
+        assert_eq!(profile.mapping_table().len(), 1);
+    }
+
+    #[test]
+    fn parses_hold_and_toggle_shift_layers() {
+        let profile = parse_profile_bytes(
+            br#"
+id: layered
+layers:
+  - id: main
+    mappings:
+      - from: btn:south
+        to: btn:south
+  - id: shift_1
+    name: Shift 1
+    activation:
+      hold: btn:tl
+      consume: true
+    mappings:
+      - from: btn:south
+        to: btn:east
+  - id: shift_2
+    activation:
+      mode: toggle
+      control: btn:tr
+      consume: false
+    mappings:
+      - from: btn:south
+        to: btn:west
+"#,
+            Path::new("layered.yaml"),
+        )
+        .unwrap();
+
+        assert_eq!(profile.layers.len(), 3);
+        assert_eq!(profile.layers[0].mappings.len(), 1);
+        let hold = profile.layers[1].activation.as_ref().unwrap();
+        assert_eq!(hold.mode, LayerActivationMode::Hold);
+        assert_eq!(hold.control_name, "btn:tl");
+        assert!(hold.consume);
+
+        let toggle = profile.layers[2].activation.as_ref().unwrap();
+        assert_eq!(toggle.mode, LayerActivationMode::Toggle);
+        assert_eq!(toggle.control_name, "btn:tr");
+        assert!(!toggle.consume);
+    }
+
+    #[test]
+    fn rejects_too_many_shift_layers() {
+        let mut yaml = String::from("id: too-many\nlayers:\n");
+        for index in 0..=MAX_SHIFT_LAYERS {
+            yaml.push_str(&format!(
+                "  - id: shift_{index}\n    activation: btn:tl\n    mappings: []\n"
+            ));
+        }
+
+        let error = parse_profile_bytes(yaml.as_bytes(), Path::new("too-many.yaml"))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("shift layers"), "{error}");
+    }
 }
