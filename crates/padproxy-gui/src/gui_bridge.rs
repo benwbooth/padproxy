@@ -11,6 +11,7 @@ pub mod qobject {
         #[qml_element]
         #[qproperty(QString, devices)]
         #[qproperty(QString, profiles)]
+        #[qproperty(QString, output_options)]
         #[qproperty(QString, status)]
         #[qproperty(QString, profile_yaml)]
         #[qproperty(QString, editing_profile_path)]
@@ -72,6 +73,7 @@ pub fn init_qt_static_modules() {
 pub struct PadProxyControllerRust {
     devices: QString,
     profiles: QString,
+    output_options: QString,
     status: QString,
     profile_yaml: QString,
     editing_profile_path: QString,
@@ -370,10 +372,11 @@ mappings:\n\
     }
 }
 
-fn refresh_json() -> anyhow::Result<(String, String, String)> {
+fn refresh_json() -> anyhow::Result<(String, String, String, String)> {
     let devices = padproxy_core::linux::list_devices()?;
     let profiles =
         padproxy_core::profiles::load_profiles(&padproxy_core::profiles::default_profile_dirs())?;
+    let output_options = padproxy_core::outputs::output_devices();
     let status = format!(
         "Loaded {} controller(s), {} profile(s)",
         devices.len(),
@@ -383,6 +386,7 @@ fn refresh_json() -> anyhow::Result<(String, String, String)> {
     Ok((
         serde_json::to_string(&devices)?,
         serde_json::to_string(&profiles)?,
+        serde_json::to_string(output_options)?,
         status,
     ))
 }
@@ -414,7 +418,7 @@ fn finish_remap_session(mut controller: Pin<&mut qobject::PadProxyController>) {
 
 fn refresh_into(mut controller: Pin<&mut qobject::PadProxyController>) {
     match refresh_json() {
-        Ok((devices, profiles, status)) => {
+        Ok((devices, profiles, output_options, status)) => {
             controller
                 .as_mut()
                 .set_devices(QString::from(devices.as_str()));
@@ -423,11 +427,15 @@ fn refresh_into(mut controller: Pin<&mut qobject::PadProxyController>) {
                 .set_profiles(QString::from(profiles.as_str()));
             controller
                 .as_mut()
+                .set_output_options(QString::from(output_options.as_str()));
+            controller
+                .as_mut()
                 .set_status(QString::from(status.as_str()));
         }
         Err(error) => {
             controller.as_mut().set_devices(QString::from("[]"));
             controller.as_mut().set_profiles(QString::from("[]"));
+            controller.as_mut().set_output_options(QString::from("[]"));
             controller
                 .as_mut()
                 .set_status(QString::from(format!("Refresh failed: {error}")));

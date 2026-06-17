@@ -1,5 +1,6 @@
 use crate::devices::DeviceInfo;
 use crate::event_code::{parse_event_code, virtual_xbox_supports, EventCode};
+use crate::outputs::normalize_output_type;
 use anyhow::{anyhow, Context, Result};
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -269,6 +270,7 @@ pub fn parse_profile_bytes(bytes: &[u8], source_path: &Path) -> Result<Profile> 
         Some(RawOutput::Object { r#type }) => r#type.unwrap_or_else(|| "xbox360".to_string()),
         None => "xbox360".to_string(),
     };
+    let output_type = normalize_output_type(&output_type);
 
     let mut mappings = Vec::new();
     for mapping in raw.mappings.unwrap_or_default() {

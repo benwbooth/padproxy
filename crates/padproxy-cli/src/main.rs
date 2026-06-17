@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
 use padproxy_core::linux::{list_devices, resolve_device};
+use padproxy_core::outputs::output_devices;
 use padproxy_core::profiles::{default_profile_dirs, load_profiles, Profile};
 use padproxy_core::remapper::{launch_with_remap, LaunchOptions};
 
@@ -14,6 +15,7 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     ListDevices,
+    ListOutputs,
     ListProfiles,
     Launch {
         #[arg(long)]
@@ -38,6 +40,20 @@ fn main() -> Result<()> {
                     device.hardware_id(),
                     device.name,
                     device.id
+                );
+            }
+            Ok(())
+        }
+        Command::ListOutputs => {
+            for output in output_devices() {
+                let status = if output.supported {
+                    "supported"
+                } else {
+                    "planned"
+                };
+                println!(
+                    "{}\t{}\t{}\t{}",
+                    output.id, status, output.label, output.note
                 );
             }
             Ok(())

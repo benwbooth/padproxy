@@ -33,6 +33,12 @@ ApplicationWindow {
 
     property var devicesModel: parseJson(backend.devices)
     property var profilesModel: parseJson(backend.profiles)
+    property var outputOptionsModel: (function() {
+        const values = parseJson(backend.output_options)
+        return values.length > 0 ? values : [
+            { id: "xbox360", label: "Xbox 360", supported: true, note: "Implemented through Linux uinput." }
+        ]
+    })()
     property var selectedProfile: profilesModel.length > 0 && profileList.currentIndex >= 0
         ? profilesModel[profileList.currentIndex]
         : null
@@ -41,6 +47,14 @@ ApplicationWindow {
     property string selectedMappingSide: "from"
     property bool hookListening: false
     property string hookStatus: backend.capture_status
+    property var sourceVisibilityOptions: [
+        { label: "Hide original controller", grab: true },
+        { label: "Keep original visible", grab: false }
+    ]
+    property var unmappedControlOptions: [
+        { label: "Pass unmapped controls", passthrough: true },
+        { label: "Drop unmapped controls", passthrough: false }
+    ]
     property var eventCodes: [
         "btn:south",
         "btn:east",
@@ -167,6 +181,58 @@ ApplicationWindow {
         return root.devicesModel[deviceList.currentIndex]
     }
 
+    function outputIndex(outputId) {
+        const normalized = outputId || "xbox360"
+        for (let i = 0; i < root.outputOptionsModel.length; i++) {
+            if (root.outputOptionsModel[i].id === normalized)
+                return i
+        }
+        return 0
+    }
+
+    function currentOutput() {
+        const index = outputTypeBox.currentIndex
+        if (index < 0 || index >= root.outputOptionsModel.length)
+            return root.outputOptionsModel[0]
+        return root.outputOptionsModel[index]
+    }
+
+    function currentOutputId() {
+        const output = root.currentOutput()
+        return output ? output.id : "xbox360"
+    }
+
+    function currentOutputSupported() {
+        const output = root.currentOutput()
+        return output ? output.supported : false
+    }
+
+    function sourceVisibilityIndex(grabSource) {
+        for (let i = 0; i < root.sourceVisibilityOptions.length; i++) {
+            if (root.sourceVisibilityOptions[i].grab === grabSource)
+                return i
+        }
+        return 0
+    }
+
+    function unmappedControlIndex(passthrough) {
+        for (let i = 0; i < root.unmappedControlOptions.length; i++) {
+            if (root.unmappedControlOptions[i].passthrough === passthrough)
+                return i
+        }
+        return 0
+    }
+
+    function currentGrabSource() {
+        const index = sourceVisibilityBox.currentIndex
+        return root.sourceVisibilityOptions[index] ? root.sourceVisibilityOptions[index].grab : true
+    }
+
+    function currentPassthrough() {
+        const index = unmappedControlBox.currentIndex
+        return root.unmappedControlOptions[index] ? root.unmappedControlOptions[index].passthrough : true
+    }
+
     function eventLabel(code) {
         switch (code) {
         case "btn:south": return "South / A / Cross"
@@ -278,9 +344,9 @@ ApplicationWindow {
         profileNameField.text = "My layout"
         profileDescriptionField.text = "Custom controller mapping."
         matchNameField.text = "*"
-        outputTypeBox.currentIndex = 0
-        passthroughCheck.checked = true
-        grabSourceCheck.checked = true
+        outputTypeBox.currentIndex = root.outputIndex("xbox360")
+        sourceVisibilityBox.currentIndex = root.sourceVisibilityIndex(true)
+        unmappedControlBox.currentIndex = root.unmappedControlIndex(true)
         mappingsModel.clear()
         root.addMapping("btn:west", "btn:east")
         root.addMapping("btn:east", "btn:west")
@@ -293,9 +359,9 @@ ApplicationWindow {
         profileNameField.text = profile.name || ""
         profileDescriptionField.text = profile.description || ""
         matchNameField.text = profile.device_match && profile.device_match.name ? profile.device_match.name : "*"
-        outputTypeBox.currentIndex = Math.max(0, outputTypeBox.model.indexOf(profile.output_type || "xbox360"))
-        passthroughCheck.checked = profile.passthrough !== false
-        grabSourceCheck.checked = profile.grab_source !== false
+        outputTypeBox.currentIndex = root.outputIndex(profile.output_type || "xbox360")
+        sourceVisibilityBox.currentIndex = root.sourceVisibilityIndex(profile.grab_source !== false)
+        unmappedControlBox.currentIndex = root.unmappedControlIndex(profile.passthrough !== false)
         mappingsModel.clear()
         if (profile.mappings) {
             for (let i = 0; i < profile.mappings.length; i++) {
@@ -320,9 +386,9 @@ ApplicationWindow {
         text += "match:\n"
         text += "  name: " + yamlString(matchNameField.text.trim() || "*") + "\n"
         text += "output:\n"
-        text += "  type: " + outputTypeBox.currentText + "\n"
-        text += "passthrough: " + (passthroughCheck.checked ? "true" : "false") + "\n"
-        text += "grab_source: " + (grabSourceCheck.checked ? "true" : "false") + "\n"
+        text += "  type: " + root.currentOutputId() + "\n"
+        text += "passthrough: " + (root.currentPassthrough() ? "true" : "false") + "\n"
+        text += "grab_source: " + (root.currentGrabSource() ? "true" : "false") + "\n"
         if (mappingsModel.count === 0) {
             text += "mappings: []\n"
         } else {
@@ -531,7 +597,8 @@ ApplicationWindow {
 
                     Button {
                         text: backend.remap_active ? "Remap Off" : "Apply"
-                        enabled: backend.remap_active || root.selectedDevice() !== null
+                        enabled: backend.remap_active
+                            || (root.selectedDevice() !== null && root.currentOutputSupported())
                         onClicked: backend.remap_active ? root.stopRemap() : root.startRemap()
                     }
 
@@ -617,25 +684,38 @@ ApplicationWindow {
                                 Label { text: "Output" }
                                 ComboBox {
                                     id: outputTypeBox
-                                    model: ["xbox360"]
+                                    model: root.outputOptionsModel
+                                    textRole: "label"
+                                    valueRole: "id"
+                                    Layout.fillWidth: true
+
+                                    delegate: ItemDelegate {
+                                        width: outputTypeBox.width
+                                        text: modelData.label + (modelData.supported ? "" : " (planned)")
+                                        enabled: modelData.supported
+                                        highlighted: outputTypeBox.highlightedIndex === index
+                                    }
+                                }
+
+                                Label { text: "Original" }
+                                ComboBox {
+                                    id: sourceVisibilityBox
+                                    model: root.sourceVisibilityOptions
+                                    textRole: "label"
+                                    Layout.fillWidth: true
+                                }
+
+                                Label { text: "Unmapped" }
+                                ComboBox {
+                                    id: unmappedControlBox
+                                    model: root.unmappedControlOptions
+                                    textRole: "label"
                                     Layout.fillWidth: true
                                 }
                             }
 
                             RowLayout {
                                 Layout.fillWidth: true
-
-                                CheckBox {
-                                    id: passthroughCheck
-                                    text: "Passthrough"
-                                    checked: true
-                                }
-
-                                CheckBox {
-                                    id: grabSourceCheck
-                                    text: "Grab source"
-                                    checked: true
-                                }
 
                                 Item {
                                     Layout.fillWidth: true

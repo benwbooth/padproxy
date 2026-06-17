@@ -1,4 +1,5 @@
 use crate::event_code::{event_from_input, virtual_xbox_supports, EventCode};
+use crate::outputs::{output_device, supported_output_ids};
 use crate::profiles::Profile;
 use anyhow::{anyhow, Context, Result};
 use evdev::uinput::VirtualDevice;
@@ -79,9 +80,14 @@ pub fn run_remap_until_stop(options: RemapOptions, stop: &AtomicBool) -> Result<
 
 impl RemapRuntime {
     pub fn start(options: RemapOptions) -> Result<Self> {
-        if options.profile.output_type != "xbox360" {
+        if output_device(&options.profile.output_type)
+            .map(|output| !output.supported)
+            .unwrap_or(true)
+        {
             return Err(anyhow!(
-                "only xbox360 virtual output is currently implemented"
+                "virtual output {} is not implemented; supported outputs: {}",
+                options.profile.output_type,
+                supported_output_ids().join(", ")
             ));
         }
 

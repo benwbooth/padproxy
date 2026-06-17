@@ -55,10 +55,11 @@ Run the Qt interface:
 nix develop --command cargo run --bin padproxy
 ```
 
-List devices and profiles:
+List devices, outputs, and profiles:
 
 ```sh
 nix develop --command cargo run --bin padproxyctl -- list-devices
+nix develop --command cargo run --bin padproxyctl -- list-outputs
 nix develop --command cargo run --bin padproxyctl -- list-profiles
 ```
 
@@ -84,12 +85,18 @@ Profiles are loaded from:
 The Qt UI can create and edit profiles from the Profiles pane. `New` starts a
 structured profile, the `Mappings` tab can edit rows through dropdowns or the
 Xbox/PlayStation/generic controller templates, and `Listen` can fill the active
-source or target control from the selected physical controller. `Apply` starts a
-background remap using the selected controller and current profile contents;
-`Remap Off` stops it and removes the virtual controller. The `YAML` tab remains
-available for raw edits. `Save` writes the result to
+source or target control from the selected physical controller. The editor shows
+implemented and planned virtual outputs, but only implemented outputs can be
+applied. `Apply` starts a background remap using the selected controller and
+current profile contents; `Remap Off` stops it and removes the virtual
+controller. The `YAML` tab remains available for raw edits. `Save` writes the result to
 `~/.config/padproxy/profiles.d`. Packaged profiles are read-only; saving one
 creates a user copy with the same profile id.
+
+The only implemented virtual output today is `xbox360`. Other reWASD-style
+virtual outputs are listed by the UI and `padproxyctl list-outputs` as planned,
+but they are intentionally not selectable for Apply until the device backend
+exists.
 
 Example:
 
