@@ -24,7 +24,7 @@ use cxx_qt_lib::QString;
 pub fn init_qt_static_modules() {
     cxx_qt::init_crate!(cxx_qt);
     cxx_qt::init_crate!(cxx_qt_lib);
-    cxx_qt::init_crate!(padproxy);
+    cxx_qt::init_crate!(padproxy_gui);
     cxx_qt::init_qml_module!("com.benwbooth.padproxy");
 }
 
@@ -55,8 +55,9 @@ impl qobject::PadProxyController {
 }
 
 fn refresh_json() -> anyhow::Result<(String, String, String)> {
-    let devices = crate::linux::list_devices()?;
-    let profiles = crate::profiles::load_profiles(&crate::profiles::default_profile_dirs())?;
+    let devices = padproxy_core::linux::list_devices()?;
+    let profiles =
+        padproxy_core::profiles::load_profiles(&padproxy_core::profiles::default_profile_dirs())?;
     let status = format!(
         "Loaded {} controller(s), {} profile(s)",
         devices.len(),

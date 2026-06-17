@@ -10,6 +10,7 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
+        targetTriple = pkgs.stdenv.hostPlatform.config;
         qtEnv = pkgs.symlinkJoin {
           name = "padproxy-qt-env";
           paths = [
@@ -53,6 +54,8 @@
           src = self;
 
           cargoLock.lockFile = ./Cargo.lock;
+          cargoBuildFlags = [ "--workspace" ];
+          cargoCheckFlags = [ "--workspace" ];
 
           nativeBuildInputs = [
             pkgs.makeWrapper
@@ -71,6 +74,7 @@
 
           QMAKE = "${qmakeForCxxQt}/bin/padproxy-qmake6";
           QT_VERSION_MAJOR = "6";
+          dontWrapQtApps = true;
 
           preBuild = ''
             export QMAKE=${qmakeForCxxQt}/bin/padproxy-qmake6
@@ -82,21 +86,25 @@
             export QT_VERSION_MAJOR=6
           '';
 
-          postInstall = ''
+          installPhase = ''
+            runHook preInstall
+
+            install -Dm755 target/${targetTriple}/release/padproxy \
+              $out/bin/padproxy
+            install -Dm755 target/${targetTriple}/release/padproxyctl \
+              $out/bin/padproxyctl
             install -Dm644 profiles/nes-2button-xa.yaml \
               $out/share/padproxy/profiles/nes-2button-xa.yaml
+
+            runHook postInstall
           '';
 
           postFixup = ''
+            wrapQtApp $out/bin/padproxy \
+              --set-default PADPROXY_PROFILE_DIR "$out/share/padproxy/profiles"
             wrapProgram $out/bin/padproxyctl \
               --set-default PADPROXY_PROFILE_DIR "$out/share/padproxy/profiles"
           '';
-
-          qtWrapperArgs = [
-            "--set-default"
-            "PADPROXY_PROFILE_DIR"
-            "${placeholder "out"}/share/padproxy/profiles"
-          ];
         };
 
         apps.default = {

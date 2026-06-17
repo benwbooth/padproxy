@@ -3,7 +3,7 @@ use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QQmlEngine, QUrl};
 use std::pin::Pin;
 
 fn main() {
-    padproxy::gui_bridge::init_qt_static_modules();
+    padproxy_gui::gui_bridge::init_qt_static_modules();
 
     let mut app = QGuiApplication::new();
     let mut engine = QQmlApplicationEngine::new();

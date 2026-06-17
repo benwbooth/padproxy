@@ -8,6 +8,14 @@ target program receives the virtual controller instead of the physical one.
 The initial target is emulator launches from Lunchbox, but the project is
 structured as a standalone tool with a Qt interface and YAML profiles.
 
+## Layout
+
+- `crates/padproxy-core`: Qt-free controller discovery, profile loading, and
+  remapping logic.
+- `crates/padproxy-cli`: the `padproxyctl` command-line tool. This links only
+  `padproxy-core`.
+- `crates/padproxy-gui`: the `padproxy` Qt/QML application built with CXX-Qt.
+
 ## Current Scope
 
 - Linux evdev controller discovery.
@@ -64,8 +72,9 @@ nix develop --command cargo run --bin padproxyctl -- launch \
 
 Profiles are loaded from:
 
-- `$PADPROXY_PROFILE_DIR`, if set
-- `./profiles`
+- `$PADPROXY_PROFILE_DIR`, if set. This can contain one or more platform path
+  entries.
+- `./profiles`, when `$PADPROXY_PROFILE_DIR` is not set
 - `~/.config/padproxy/profiles.d`
 - `/etc/padproxy/profiles.d`
 

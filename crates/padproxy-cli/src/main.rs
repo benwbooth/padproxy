@@ -1,8 +1,8 @@
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
-use padproxy::linux::{list_devices, resolve_device};
-use padproxy::profiles::{default_profile_dirs, load_profiles, Profile};
-use padproxy::remapper::{launch_with_remap, LaunchOptions};
+use padproxy_core::linux::{list_devices, resolve_device};
+use padproxy_core::profiles::{default_profile_dirs, load_profiles, Profile};
+use padproxy_core::remapper::{launch_with_remap, LaunchOptions};
 
 #[derive(Debug, Parser)]
 #[command(author, version, about)]
@@ -26,8 +26,6 @@ enum Command {
 }
 
 fn main() -> Result<()> {
-    padproxy::gui_bridge::init_qt_static_modules();
-
     let cli = Cli::parse();
 
     match cli.command {

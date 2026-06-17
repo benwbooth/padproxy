@@ -1,29 +1,25 @@
-[package]
-name = "padproxy"
+[workspace]
+members = [
+    "crates/padproxy-cli",
+    "crates/padproxy-core",
+    "crates/padproxy-gui",
+]
+resolver = "2"
+
+[workspace.package]
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 
-[dependencies]
+[workspace.dependencies]
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }
 cxx = "1.0"
 cxx-qt = "0.8.1"
+cxx-qt-build = { version = "0.8.1", features = ["link_qt_object_files"] }
 cxx-qt-lib = { version = "0.8.1", features = ["full"] }
 evdev = "0.13.2"
-libc = "0.2"
+padproxy-core = { path = "crates/padproxy-core" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
-thiserror = "2.0"
-
-[build-dependencies]
-cxx-qt-build = { version = "0.8.1", features = ["link_qt_object_files"] }
-
-[[bin]]
-name = "padproxy"
-path = "src/bin/padproxy.rs"
-
-[[bin]]
-name = "padproxyctl"
-path = "src/bin/padproxyctl.rs"

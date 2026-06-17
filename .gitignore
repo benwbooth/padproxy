@@ -1,7 +1,7 @@
 target/
 result
-/.qmlls.ini
-/.cache/
+.qmlls.ini
+.cache/
 *.user
 *.swp
 *~
