@@ -1,8 +1,9 @@
 use crate::event_code::{event_from_input, virtual_xbox_supports, EventCode, EventKind};
 use crate::outputs::{output_device, supported_output_ids};
 use crate::profiles::{
-    AnalogTuning, CommandAction, CommandSettings, LayerActivation, LayerActivationMode, MacroEvent,
-    MacroEventKind, MacroMode, MacroSettings, Mapping, MappingAction, Profile,
+    ActivatorKind, ActivatorSettings, AnalogTuning, CommandAction, CommandSettings,
+    LayerActivation, LayerActivationMode, MacroEvent, MacroEventKind, MacroMode, MacroSettings,
+    Mapping, MappingAction, Profile,
 };
 use anyhow::{anyhow, Context, Result};
 use evdev::uinput::VirtualDevice;
@@ -47,6 +48,7 @@ pub struct RemapRuntime {
     macro_output_keys: HashSet<EventCode>,
     macro_output_axes: HashMap<EventCode, i32>,
     turbo_states: HashMap<EventCode, TurboState>,
+    pending_activators: HashMap<EventCode, PendingActivator>,
     analog_tuning: HashMap<EventCode, AnalogTuning>,
     virtual_nodes: Vec<String>,
 }
@@ -61,6 +63,7 @@ struct ResolvedMapping {
     action: MappingAction,
     target: EventCode,
     mapped: bool,
+    activator: ActivatorSettings,
     turbo_interval: Option<Duration>,
     macro_settings: Option<MacroSettings>,
     command: Option<CommandSettings>,
@@ -77,6 +80,13 @@ struct ScheduledMacroEvent {
     due: Instant,
     event: EventCode,
     value: i32,
+}
+
+struct PendingActivator {
+    resolved: ResolvedMapping,
+    count: u8,
+    required_count: u8,
+    due: Option<Instant>,
 }
 
 pub fn launch_with_remap(options: LaunchOptions) -> Result<i32> {
@@ -184,6 +194,7 @@ impl RemapRuntime {
             macro_output_keys: HashSet::new(),
             macro_output_axes: HashMap::new(),
             turbo_states: HashMap::new(),
+            pending_activators: HashMap::new(),
             analog_tuning,
             virtual_nodes,
         })
@@ -224,6 +235,7 @@ impl RemapRuntime {
             self.push_mapped_event(source_event, event.value(), &mut output);
         }
 
+        self.push_due_activator_events(&mut output);
         self.push_due_macro_events(&mut output);
         self.push_due_turbo_events(&mut output);
 
@@ -288,6 +300,12 @@ impl RemapRuntime {
         value: i32,
         output: &mut Vec<InputEvent>,
     ) {
+        let resolved = self.resolved_mapping(source_event);
+        if resolved.activator.kind != ActivatorKind::Press {
+            self.push_activated_key_event(source_event, value, resolved, output);
+            return;
+        }
+
         if value == 0 {
             if self.pressed_command_sources.remove(&source_event) {
                 return;
@@ -301,7 +319,6 @@ impl RemapRuntime {
             }
 
             let Some(target_event) = self.pressed_key_targets.remove(&source_event) else {
-                let resolved = self.resolved_mapping(source_event);
                 if resolved.action == MappingAction::Map
                     && (self.profile.passthrough || resolved.mapped)
                     && virtual_xbox_supports(resolved.target)
@@ -328,7 +345,15 @@ impl RemapRuntime {
             return;
         }
 
-        let resolved = self.resolved_mapping(source_event);
+        self.push_press_mapping_action(source_event, resolved, output);
+    }
+
+    fn push_press_mapping_action(
+        &mut self,
+        source_event: EventCode,
+        resolved: ResolvedMapping,
+        output: &mut Vec<InputEvent>,
+    ) {
         if resolved.action == MappingAction::Macro {
             if let Some(macro_settings) = resolved.macro_settings {
                 self.pressed_macro_sources.insert(source_event);
@@ -371,6 +396,123 @@ impl RemapRuntime {
                 },
             );
         }
+    }
+
+    fn push_activated_key_event(
+        &mut self,
+        source_event: EventCode,
+        value: i32,
+        resolved: ResolvedMapping,
+        output: &mut Vec<InputEvent>,
+    ) {
+        match resolved.activator.kind {
+            ActivatorKind::Press => unreachable!("press activator uses the normal press path"),
+            ActivatorKind::Release => {
+                if value == 0 {
+                    if let Some(pending) = self.pending_activators.remove(&source_event) {
+                        self.trigger_activated_mapping(source_event, pending.resolved, output);
+                    }
+                } else {
+                    self.pending_activators.insert(
+                        source_event,
+                        PendingActivator {
+                            resolved,
+                            count: 1,
+                            required_count: 1,
+                            due: None,
+                        },
+                    );
+                }
+            }
+            ActivatorKind::LongPress => {
+                if value == 0 {
+                    self.pending_activators.remove(&source_event);
+                    return;
+                }
+                self.pending_activators
+                    .entry(source_event)
+                    .or_insert_with(|| PendingActivator {
+                        due: Some(
+                            Instant::now() + Duration::from_millis(resolved.activator.delay_ms),
+                        ),
+                        resolved,
+                        count: 1,
+                        required_count: 1,
+                    });
+            }
+            ActivatorKind::DoublePress | ActivatorKind::TriplePress => {
+                if value == 0 {
+                    return;
+                }
+
+                let required_count = match resolved.activator.kind {
+                    ActivatorKind::DoublePress => 2,
+                    ActivatorKind::TriplePress => 3,
+                    _ => unreachable!("multi-press branch only handles multi-press activators"),
+                };
+                let due = Instant::now() + Duration::from_millis(resolved.activator.delay_ms);
+                let mut should_trigger = false;
+                if let Some(pending) = self.pending_activators.get_mut(&source_event) {
+                    if pending.resolved.activator.kind == resolved.activator.kind {
+                        pending.count = pending.count.saturating_add(1);
+                    } else {
+                        pending.count = 1;
+                    }
+                    pending.required_count = required_count;
+                    pending.due = Some(due);
+                    pending.resolved = resolved;
+                    should_trigger = pending.count >= pending.required_count;
+                } else {
+                    self.pending_activators.insert(
+                        source_event,
+                        PendingActivator {
+                            resolved,
+                            count: 1,
+                            required_count,
+                            due: Some(due),
+                        },
+                    );
+                }
+
+                if should_trigger {
+                    if let Some(pending) = self.pending_activators.remove(&source_event) {
+                        self.trigger_activated_mapping(source_event, pending.resolved, output);
+                    }
+                }
+            }
+        }
+    }
+
+    fn trigger_activated_mapping(
+        &mut self,
+        source_event: EventCode,
+        resolved: ResolvedMapping,
+        output: &mut Vec<InputEvent>,
+    ) {
+        match resolved.action {
+            MappingAction::Macro => {
+                if let Some(macro_settings) = resolved.macro_settings {
+                    self.enqueue_macro_sequence(&macro_settings.events);
+                }
+            }
+            MappingAction::Command => {
+                if let Some(command) = resolved.command.as_ref() {
+                    self.execute_command(command.action, output);
+                }
+            }
+            MappingAction::Disable => {}
+            MappingAction::Map => {
+                if (!self.profile.passthrough && !resolved.mapped)
+                    || !virtual_xbox_supports(resolved.target)
+                {
+                    return;
+                }
+                push_input_event(output, resolved.target, 1);
+                push_input_event(output, resolved.target, 0);
+            }
+        }
+
+        self.pending_activators.remove(&source_event);
     }
 
     fn push_mapped_absolute_event(
@@ -466,6 +608,30 @@ impl RemapRuntime {
         self.macro_queue.insert(index, scheduled);
     }
 
+    fn push_due_activator_events(&mut self, output: &mut Vec<InputEvent>) {
+        let now = Instant::now();
+        let due_sources = self
+            .pending_activators
+            .iter()
+            .filter_map(|(source, pending)| {
+                if matches!(pending.due, Some(due) if now >= due) {
+                    Some(*source)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+
+        for source_event in due_sources {
+            let Some(pending) = self.pending_activators.remove(&source_event) else {
+                continue;
+            };
+            if pending.resolved.activator.kind == ActivatorKind::LongPress {
+                self.trigger_activated_mapping(source_event, pending.resolved, output);
+            }
+        }
+    }
+
     fn push_due_macro_events(&mut self, output: &mut Vec<InputEvent>) {
         let now = Instant::now();
         loop {
@@ -531,6 +697,7 @@ impl RemapRuntime {
                 action: mapping.action,
                 target: mapping.to,
                 mapped: true,
+                activator: mapping.activator.clone(),
                 turbo_interval: mapping
                     .turbo
                     .as_ref()
@@ -542,6 +709,7 @@ impl RemapRuntime {
                 action: MappingAction::Map,
                 target: source_event,
                 mapped: false,
+                activator: ActivatorSettings::default(),
                 turbo_interval: None,
                 macro_settings: None,
                 command: None,

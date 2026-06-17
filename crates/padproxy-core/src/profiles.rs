@@ -11,6 +11,8 @@ use std::path::{Path, PathBuf};
 pub const MAIN_LAYER_ID: &str = "main";
 pub const MAX_SHIFT_LAYERS: usize = 10;
 pub const DEFAULT_TURBO_INTERVAL_MS: u64 = 75;
+pub const DEFAULT_LONG_PRESS_MS: u64 = 450;
+pub const DEFAULT_MULTI_PRESS_MS: u64 = 300;
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct DeviceMatch {
@@ -31,6 +33,7 @@ pub struct Mapping {
     pub from_name: String,
     pub to_name: String,
     pub action: MappingAction,
+    pub activator: ActivatorSettings,
     pub turbo: Option<TurboSettings>,
     #[serde(rename = "macro")]
     pub macro_settings: Option<MacroSettings>,
@@ -44,6 +47,31 @@ pub enum MappingAction {
     Disable,
     Macro,
     Command,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ActivatorSettings {
+    pub kind: ActivatorKind,
+    pub delay_ms: u64,
+}
+
+impl Default for ActivatorSettings {
+    fn default() -> Self {
+        Self {
+            kind: ActivatorKind::Press,
+            delay_ms: 0,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivatorKind {
+    Press,
+    Release,
+    LongPress,
+    DoublePress,
+    TriplePress,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -177,12 +205,30 @@ struct RawMapping {
     to: Option<String>,
     action: Option<String>,
     r#type: Option<String>,
+    activator: Option<RawMappingActivator>,
     turbo: Option<RawTurbo>,
     turbo_interval_ms: Option<u64>,
     #[serde(rename = "macro")]
     macro_settings: Option<RawMacroSettings>,
     macro_events: Option<Vec<RawMacroEvent>>,
     command: Option<RawCommandSettings>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum RawMappingActivator {
+    Scalar(String),
+    Object(RawMappingActivatorObject),
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawMappingActivatorObject {
+    kind: Option<String>,
+    r#type: Option<String>,
+    mode: Option<String>,
+    delay_ms: Option<u64>,
+    timeout_ms: Option<u64>,
+    interval_ms: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -719,6 +765,7 @@ fn parse_mappings(mappings: Option<Vec<RawMapping>>, context: &str) -> Result<Ve
         )?;
         let command =
             parse_command_settings(mapping.command, action, from, &mapping.from, context)?;
+        let activator = parse_mapping_activator(mapping.activator, from, &mapping.from, context)?;
 
         let to = match action {
             MappingAction::Map => {
@@ -747,6 +794,12 @@ fn parse_mappings(mappings: Option<Vec<RawMapping>>, context: &str) -> Result<Ve
 
         let turbo = parse_turbo(mapping.turbo, mapping.turbo_interval_ms)?;
         if turbo.is_some() {
+            if activator.kind != ActivatorKind::Press {
+                return Err(anyhow!(
+                    "turbo mapping from {} in {context} can only use press activator",
+                    mapping.from
+                ));
+            }
             if action == MappingAction::Disable {
                 return Err(anyhow!(
                     "disabled mapping from {} in {context} cannot use turbo",
@@ -774,12 +827,23 @@ fn parse_mappings(mappings: Option<Vec<RawMapping>>, context: &str) -> Result<Ve
                 ));
             }
         }
+        if matches!(
+            macro_settings.as_ref().map(|settings| settings.mode),
+            Some(MacroMode::Hold)
+        ) && activator.kind != ActivatorKind::Press
+        {
+            return Err(anyhow!(
+                "hold macro from {} in {context} can only use press activator",
+                mapping.from
+            ));
+        }
         parsed.push(Mapping {
             from,
             to,
             from_name: from.name(),
             to_name: to.name(),
             action,
+            activator,
             turbo,
             macro_settings,
             command,
@@ -799,6 +863,80 @@ fn parse_mapping_action(value: Option<&str>) -> Result<MappingAction> {
         "macro" | "combo" | "sequence" => Ok(MappingAction::Macro),
         "command" | "cmd" => Ok(MappingAction::Command),
         other => Err(anyhow!("unknown mapping action {other}")),
+    }
+}
+
+fn parse_mapping_activator(
+    raw: Option<RawMappingActivator>,
+    from: EventCode,
+    from_name: &str,
+    context: &str,
+) -> Result<ActivatorSettings> {
+    let Some(raw) = raw else {
+        return Ok(ActivatorSettings::default());
+    };
+
+    let (kind_value, delay_ms) = match raw {
+        RawMappingActivator::Scalar(value) => (value, None),
+        RawMappingActivator::Object(object) => {
+            let kind = object
+                .kind
+                .or(object.r#type)
+                .or(object.mode)
+                .ok_or_else(|| anyhow!("activator from {from_name} in {context} requires kind"))?;
+            (
+                kind,
+                object.delay_ms.or(object.timeout_ms).or(object.interval_ms),
+            )
+        }
+    };
+
+    let kind = parse_activator_kind(&kind_value)?;
+    if kind != ActivatorKind::Press && from.kind != EventKind::Key {
+        return Err(anyhow!(
+            "activator from {from_name} in {context} requires a button source"
+        ));
+    }
+
+    let delay_ms = match kind {
+        ActivatorKind::Press | ActivatorKind::Release => {
+            if let Some(delay_ms) = delay_ms {
+                if delay_ms != 0 {
+                    return Err(anyhow!(
+                        "activator from {from_name} in {context} cannot use delay_ms with {kind_value}"
+                    ));
+                }
+            }
+            0
+        }
+        ActivatorKind::LongPress => delay_ms.unwrap_or(DEFAULT_LONG_PRESS_MS),
+        ActivatorKind::DoublePress | ActivatorKind::TriplePress => {
+            delay_ms.unwrap_or(DEFAULT_MULTI_PRESS_MS)
+        }
+    };
+    if matches!(
+        kind,
+        ActivatorKind::LongPress | ActivatorKind::DoublePress | ActivatorKind::TriplePress
+    ) && !(50..=5000).contains(&delay_ms)
+    {
+        return Err(anyhow!(
+            "activator from {from_name} in {context} delay_ms must be between 50 and 5000"
+        ));
+    }
+
+    Ok(ActivatorSettings { kind, delay_ms })
+}
+
+fn parse_activator_kind(value: &str) -> Result<ActivatorKind> {
+    match normalize_mapping_keyword(value).as_str() {
+        "press" | "single" | "single_press" | "start_press" | "down_press" | "on_press" => {
+            Ok(ActivatorKind::Press)
+        }
+        "release" | "release_press" | "up_press" | "on_release" => Ok(ActivatorKind::Release),
+        "long" | "long_press" | "hold_press" => Ok(ActivatorKind::LongPress),
+        "double" | "double_press" => Ok(ActivatorKind::DoublePress),
+        "triple" | "triple_press" => Ok(ActivatorKind::TriplePress),
+        other => Err(anyhow!("unknown mapping activator {other}")),
     }
 }
 
@@ -1342,8 +1480,9 @@ mod tests {
     use crate::event_code::parse_event_code;
 
     use super::{
-        parse_profile_bytes, AnalogTuning, CommandAction, LayerActivationMode, MacroEventKind,
-        MacroMode, MappingAction, DEFAULT_TURBO_INTERVAL_MS, MAIN_LAYER_ID, MAX_SHIFT_LAYERS,
+        parse_profile_bytes, ActivatorKind, AnalogTuning, CommandAction, LayerActivationMode,
+        MacroEventKind, MacroMode, MappingAction, DEFAULT_LONG_PRESS_MS, DEFAULT_MULTI_PRESS_MS,
+        DEFAULT_TURBO_INTERVAL_MS, MAIN_LAYER_ID, MAX_SHIFT_LAYERS,
     };
     use std::path::Path;
 
@@ -1455,6 +1594,159 @@ mappings:
             DEFAULT_TURBO_INTERVAL_MS
         );
         assert_eq!(profile.mappings[2].turbo.as_ref().unwrap().interval_ms, 120);
+    }
+
+    #[test]
+    fn parses_mapping_activators() {
+        let profile = parse_profile_bytes(
+            br#"
+id: activators
+mappings:
+  - from: btn:south
+    to: btn:east
+  - from: btn:east
+    to: btn:south
+    activator: release
+  - from: btn:west
+    to: btn:north
+    activator:
+      kind: long_press
+  - from: btn:north
+    to: btn:west
+    activator:
+      kind: double_press
+      timeout_ms: 225
+  - from: btn:tl
+    to: btn:tr
+    activator:
+      kind: triple_press
+      interval_ms: 400
+  - from: btn:start
+    to: btn:select
+    activator: double_press
+"#,
+            Path::new("activators.yaml"),
+        )
+        .unwrap();
+
+        assert_eq!(profile.mappings[0].activator.kind, ActivatorKind::Press);
+        assert_eq!(profile.mappings[0].activator.delay_ms, 0);
+        assert_eq!(profile.mappings[1].activator.kind, ActivatorKind::Release);
+        assert_eq!(profile.mappings[1].activator.delay_ms, 0);
+        assert_eq!(profile.mappings[2].activator.kind, ActivatorKind::LongPress);
+        assert_eq!(
+            profile.mappings[2].activator.delay_ms,
+            DEFAULT_LONG_PRESS_MS
+        );
+        assert_eq!(
+            profile.mappings[3].activator.kind,
+            ActivatorKind::DoublePress
+        );
+        assert_eq!(profile.mappings[3].activator.delay_ms, 225);
+        assert_eq!(
+            profile.mappings[4].activator.kind,
+            ActivatorKind::TriplePress
+        );
+        assert_eq!(profile.mappings[4].activator.delay_ms, 400);
+        assert_eq!(
+            profile.mappings[5].activator.kind,
+            ActivatorKind::DoublePress
+        );
+        assert_eq!(
+            profile.mappings[5].activator.delay_ms,
+            DEFAULT_MULTI_PRESS_MS
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_mapping_activators() {
+        let axis_source = parse_profile_bytes(
+            br#"
+id: axis-activator
+mappings:
+  - from: abs:x
+    to: abs:y
+    activator: long_press
+"#,
+            Path::new("axis-activator.yaml"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            axis_source.contains("requires a button source"),
+            "{axis_source}"
+        );
+
+        let turbo = parse_profile_bytes(
+            br#"
+id: turbo-activator
+mappings:
+  - from: btn:south
+    to: btn:east
+    activator: double_press
+    turbo: true
+"#,
+            Path::new("turbo-activator.yaml"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(turbo.contains("can only use press activator"), "{turbo}");
+
+        let hold_macro = parse_profile_bytes(
+            br#"
+id: hold-macro-activator
+mappings:
+  - from: btn:tl
+    action: macro
+    activator: release
+    macro:
+      mode: hold
+      events:
+        - down: btn:south
+"#,
+            Path::new("hold-macro-activator.yaml"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            hold_macro.contains("can only use press activator"),
+            "{hold_macro}"
+        );
+
+        let press_delay = parse_profile_bytes(
+            br#"
+id: press-delay
+mappings:
+  - from: btn:south
+    to: btn:east
+    activator:
+      kind: press
+      delay_ms: 50
+"#,
+            Path::new("press-delay.yaml"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(press_delay.contains("cannot use delay_ms"), "{press_delay}");
+
+        let delay_range = parse_profile_bytes(
+            br#"
+id: delay-range
+mappings:
+  - from: btn:south
+    to: btn:east
+    activator:
+      kind: long_press
+      delay_ms: 10
+"#,
+            Path::new("delay-range.yaml"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            delay_range.contains("delay_ms must be between"),
+            "{delay_range}"
+        );
     }
 
     #[test]

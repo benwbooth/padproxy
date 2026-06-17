@@ -67,6 +67,13 @@ ApplicationWindow {
         { label: "Macro", action: "macro" },
         { label: "Command", action: "command" }
     ]
+    property var mappingActivatorOptions: [
+        { label: "Press", kind: "press" },
+        { label: "Release", kind: "release" },
+        { label: "Long", kind: "long_press" },
+        { label: "Double", kind: "double_press" },
+        { label: "Triple", kind: "triple_press" }
+    ]
     property var commandActionOptions: [
         { label: "Stop macros", command: "stop_macros" }
     ]
@@ -301,6 +308,26 @@ ApplicationWindow {
         return option ? option.action : "map"
     }
 
+    function mappingActivatorIndex(kind) {
+        const normalized = kind || "press"
+        for (let i = 0; i < root.mappingActivatorOptions.length; i++) {
+            if (root.mappingActivatorOptions[i].kind === normalized)
+                return i
+        }
+        return 0
+    }
+
+    function mappingActivatorAt(index) {
+        const option = root.mappingActivatorOptions[index]
+        return option ? option.kind : "press"
+    }
+
+    function mappingActivatorLabel(kind) {
+        const index = root.mappingActivatorIndex(kind)
+        const option = root.mappingActivatorOptions[index]
+        return option ? option.label.toLowerCase() : "press"
+    }
+
     function commandActionIndex(command) {
         const normalized = command || "stop_macros"
         for (let i = 0; i < root.commandActionOptions.length; i++) {
@@ -426,6 +453,7 @@ ApplicationWindow {
                 fromCode: row.fromCode,
                 toCode: row.toCode,
                 action: row.action || "map",
+                activatorKind: row.activatorKind || "press",
                 macroMode: row.macroMode || "press",
                 commandAction: row.commandAction || "stop_macros",
                 turboEnabled: row.turboEnabled === true,
@@ -446,6 +474,7 @@ ApplicationWindow {
                     ? root.macroTargetFromProfile(mappings[i])
                     : mappings[i].to_name || mappings[i].to || "btn:south",
                 action: action,
+                activatorKind: root.mappingActivatorFromProfile(mappings[i]),
                 macroMode: action === "macro" ? root.macroModeFromProfile(mappings[i]) : "press",
                 commandAction: action === "command" ? root.commandActionFromProfile(mappings[i]) : "stop_macros",
                 turboEnabled: turbo !== null,
@@ -470,6 +499,11 @@ ApplicationWindow {
         return macro && macro.mode === "hold" ? "hold" : "press"
     }
 
+    function mappingActivatorFromProfile(mapping) {
+        const activator = mapping && mapping.activator ? mapping.activator : null
+        return activator && activator.kind ? activator.kind : "press"
+    }
+
     function commandActionFromProfile(mapping) {
         const command = mapping && mapping.command ? mapping.command : null
         return command && command.action ? command.action : "stop_macros"
@@ -482,6 +516,7 @@ ApplicationWindow {
                 fromCode: rows[i].fromCode || "btn:south",
                 toCode: rows[i].toCode || "btn:south",
                 action: rows[i].action || "map",
+                activatorKind: rows[i].activatorKind || "press",
                 macroMode: rows[i].macroMode || "press",
                 commandAction: rows[i].commandAction || "stop_macros",
                 turboEnabled: rows[i].turboEnabled === true,
@@ -665,6 +700,7 @@ ApplicationWindow {
             fromCode: fromCode,
             toCode: toCode,
             action: "map",
+            activatorKind: "press",
             macroMode: "press",
             commandAction: "stop_macros",
             turboEnabled: false,
@@ -677,6 +713,8 @@ ApplicationWindow {
         root.ensureMappingSelection(code)
         const propertyName = root.selectedMappingSide === "to" ? "toCode" : "fromCode"
         mappingsModel.setProperty(root.selectedMappingIndex, propertyName, code)
+        if (propertyName === "fromCode" && root.buttonEventCodes.indexOf(code) < 0)
+            mappingsModel.setProperty(root.selectedMappingIndex, "activatorKind", "press")
     }
 
     function startHook() {
@@ -788,8 +826,11 @@ ApplicationWindow {
 
     function mappingYaml(indent, row) {
         const action = row.action || "map"
+        const activatorKind = row.activatorKind || "press"
         let text = ""
         text += indent + "- from: " + row.fromCode + "\n"
+        if (activatorKind !== "press")
+            text += indent + "  activator: " + activatorKind + "\n"
         if (action === "disable") {
             text += indent + "  action: disable\n"
         } else if (action === "command") {
@@ -810,7 +851,7 @@ ApplicationWindow {
             }
         } else {
             text += indent + "  to: " + row.toCode + "\n"
-            if (row.turboEnabled === true) {
+            if (row.turboEnabled === true && activatorKind === "press") {
                 text += indent + "  turbo:\n"
                 text += indent + "    interval_ms: " + root.normalizedTurboInterval(row.turboIntervalMs) + "\n"
             }
@@ -1576,15 +1617,18 @@ ApplicationWindow {
                                                 return "No mapping row"
                                             const prefix = "Row " + (root.selectedMappingIndex + 1) + ": "
                                                 + root.eventLabel(row.fromCode)
+                                            const activatorSuffix = row.activatorKind && row.activatorKind !== "press"
+                                                ? " " + root.mappingActivatorLabel(row.activatorKind)
+                                                : ""
                                             if (row.action === "disable")
-                                                return prefix + " disabled"
+                                                return prefix + activatorSuffix + " disabled"
                                             if (row.action === "command")
-                                                return prefix + " command stop macros"
+                                                return prefix + activatorSuffix + " command stop macros"
                                             if (row.action === "macro")
-                                                return prefix + " macro "
+                                                return prefix + activatorSuffix + " macro "
                                                     + (row.macroMode === "hold" ? "hold " : "tap ")
                                                     + root.eventLabel(row.toCode)
-                                            return prefix + " -> " + root.eventLabel(row.toCode)
+                                            return prefix + activatorSuffix + " -> " + root.eventLabel(row.toCode)
                                                 + (row.turboEnabled === true ? " turbo" : "")
                                         })()
                                         elide: Text.ElideRight
@@ -1643,6 +1687,8 @@ ApplicationWindow {
                                                     root.selectedMappingIndex = index
                                                     root.selectedMappingSide = "from"
                                                     mappingsModel.setProperty(index, "fromCode", currentText)
+                                                    if (root.buttonEventCodes.indexOf(currentText) < 0)
+                                                        mappingsModel.setProperty(index, "activatorKind", "press")
                                                 }
                                                 ToolTip.visible: hovered
                                                 ToolTip.text: root.eventLabel(currentText)
@@ -1670,9 +1716,36 @@ ApplicationWindow {
                                                         mappingsModel.setProperty(index, "toCode", "btn:south")
                                                     if (nextAction === "macro" && !macroMode)
                                                         mappingsModel.setProperty(index, "macroMode", "press")
+                                                    if (nextAction === "macro" && macroMode === "hold" && activatorKind !== "press")
+                                                        mappingsModel.setProperty(index, "activatorKind", "press")
                                                     if (nextAction === "command" && !commandAction)
                                                         mappingsModel.setProperty(index, "commandAction", "stop_macros")
                                                 }
+                                            }
+
+                                            ComboBox {
+                                                model: root.mappingActivatorOptions
+                                                textRole: "label"
+                                                currentIndex: root.mappingActivatorIndex(activatorKind)
+                                                enabled: root.buttonEventCodes.indexOf(fromCode) >= 0
+                                                opacity: enabled ? 1.0 : 0.35
+                                                Layout.preferredWidth: 112
+                                                onPressedChanged: {
+                                                    if (pressed)
+                                                        root.selectedMappingIndex = index
+                                                }
+                                                onActivated: function(activatorIndex) {
+                                                    root.selectedMappingIndex = index
+                                                    const nextActivator = root.mappingActivatorAt(activatorIndex)
+                                                    mappingsModel.setProperty(index, "activatorKind", nextActivator)
+                                                    if (nextActivator !== "press") {
+                                                        mappingsModel.setProperty(index, "turboEnabled", false)
+                                                        if (macroMode === "hold")
+                                                            mappingsModel.setProperty(index, "macroMode", "press")
+                                                    }
+                                                }
+                                                ToolTip.visible: hovered
+                                                ToolTip.text: "When this mapping fires"
                                             }
 
                                             Label {
@@ -1734,12 +1807,14 @@ ApplicationWindow {
                                                 onToggled: {
                                                     root.selectedMappingIndex = index
                                                     mappingsModel.setProperty(index, "macroMode", checked ? "hold" : "press")
+                                                    if (checked)
+                                                        mappingsModel.setProperty(index, "activatorKind", "press")
                                                 }
                                             }
 
                                             CheckBox {
                                                 text: "Turbo"
-                                                enabled: action !== "disable" && action !== "macro" && action !== "command"
+                                                enabled: action !== "disable" && action !== "macro" && action !== "command" && activatorKind === "press"
                                                 checked: turboEnabled === true
                                                 Layout.preferredWidth: 78
                                                 onToggled: {
@@ -1754,7 +1829,7 @@ ApplicationWindow {
                                                 stepSize: 5
                                                 editable: true
                                                 value: root.normalizedTurboInterval(turboIntervalMs)
-                                                enabled: action !== "disable" && action !== "macro" && action !== "command" && turboEnabled === true
+                                                enabled: action !== "disable" && action !== "macro" && action !== "command" && activatorKind === "press" && turboEnabled === true
                                                 visible: enabled
                                                 Layout.preferredWidth: 88
                                                 onValueModified: {

@@ -56,16 +56,17 @@ Source pages consulted:
 
 ## Activators
 
-- Single press.
-- Long press.
-- Double press.
-- Triple press.
-- Start press.
-- Release press.
-- Hold until release.
-- Toggle.
+- Single press. Done for controller mappings.
+- Long press. Basic controller-button activator done.
+- Double press. Basic controller-button activator done.
+- Triple press. Basic controller-button activator done.
+- Start press. Done as the default press activator for controller mappings.
+- Release press. Basic controller-button activator done.
+- Hold until release. Basic hold macros and hold shift layers done.
+- Toggle. Basic toggle shift layers done.
 - Turbo / rapid fire. Done for held controller button remaps.
-- Custom activator delays and timings.
+- Custom activator delays and timings. Basic `delay_ms`/`timeout_ms`/`interval_ms`
+  YAML timing done for long, double, and triple press.
 
 ## Combos / Macros
 
@@ -184,6 +185,6 @@ Source pages consulted:
 3. Add hook mode to pick source and target controls by pressing buttons. Done.
 4. Add remap ON/OFF/apply lifecycle from the GUI. Done.
 5. Add virtual output type selection and hide/grab policy controls. Done for implemented outputs; planned outputs are visible but disabled until their virtual-device backends exist.
-6. Add layers, then activators, then macros. Basic main/shift layers are done with hold/toggle activation, disable mappings, held-button turbo, press-triggered controller macros, and hold-until-release controller macros; richer activators and macros remain.
+6. Add layers, then activators, then macros. Basic main/shift layers are done with hold/toggle activation, disable mappings, held-button turbo, press/release/long/double/triple controller activators, press-triggered controller macros, and hold-until-release controller macros; richer activators and macros remain.
 7. Add analog tuning. Basic per-axis deadzone, sensitivity, inversion, and output range are done.
 8. Add process autodetect and Lunchbox integration.

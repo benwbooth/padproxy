@@ -88,15 +88,19 @@ Xbox/PlayStation/generic controller templates, and `Listen` can fill the active
 source or target control from the selected physical controller. The layer
 selector edits the main layer plus up to ten shift layers, each activated by a
 hold or toggle control. Individual mapping rows can map, disable, or turbo a
-button output. The analog panel tunes virtual axes with deadzone, sensitivity,
-inversion, and output range controls. Macro rows can tap a virtual button from
-the structured editor or hold a virtual button until the source is released;
-the raw YAML editor also supports explicit controller button down/up events,
-axis set events, release-side events, and pauses. Command rows can run
-PadProxy commands such as stopping queued and held macro output. The editor
-shows implemented and planned virtual outputs, but only implemented outputs can
-be applied. `Apply` starts a background remap using the selected controller and
-current profile contents; `Remap Off` stops it and removes the virtual
+button output, and button mappings can fire on press, release, long press,
+double press, or triple press. Non-press activators fire discrete map taps,
+press macros, or commands; YAML can customize long/multi-press timing with
+`delay_ms`, `timeout_ms`, or `interval_ms`. The analog panel tunes virtual axes
+with deadzone, sensitivity, inversion, and output range controls. Macro rows
+can tap a virtual button from the structured editor or hold a virtual button
+until the source is released; the raw YAML editor also supports explicit
+controller button down/up events, axis set events, release-side events, and
+pauses. Command rows can run PadProxy commands such as stopping queued and held
+macro output. The editor shows implemented and planned virtual outputs, but
+only implemented outputs can be applied. `Apply` starts a background remap
+using the selected controller and current profile contents; `Remap Off` stops
+it and removes the virtual
 controller. The `YAML` tab remains available for raw edits. `Save` writes the
 result to
 `~/.config/padproxy/profiles.d`. Packaged profiles are read-only; saving one
@@ -155,6 +159,14 @@ mappings:
         - axis: abs:x
           value: 0
         - up: btn:south
+  - from: btn:tr
+    activator:
+      kind: double_press
+      timeout_ms: 300
+    action: macro
+    macro:
+      events:
+        - tap: btn:north
   - from: btn:select
     action: command
     command: stop_macros
