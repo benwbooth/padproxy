@@ -175,9 +175,13 @@ Source pages consulted:
 
 ## Device Grouping
 
-- Group multiple devices into one virtual controller.
+- Group multiple devices into one virtual controller. Basic grouping done: a
+  profile `group:` list of device matchers opens additional source devices and
+  merges their input into the same virtual controller.
 - Per-device sub-configs inside a group.
-- Ordered same-type devices, such as Gamepad 1 and Gamepad 2.
+- Ordered same-type devices, such as Gamepad 1 and Gamepad 2. Basic ordering
+  done: group matchers resolve to distinct devices in listed order, so two
+  same-type controllers map to ordered group members.
 - Joy-Con grouping.
 - Phone gyro grouped with physical gamepad.
 

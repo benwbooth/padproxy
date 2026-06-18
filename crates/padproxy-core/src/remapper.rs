@@ -1,10 +1,11 @@
 use crate::event_code::{event_from_input, virtual_output_supports, EventCode, EventKind};
+use crate::linux::list_devices;
 use crate::outputs::{output_device, supported_output_ids};
 use crate::profiles::{
-    ActivatorKind, ActivatorSettings, AnalogTuning, CommandAction, CommandSettings,
-    DigitalStickMapping, LayerActivation, LayerActivationMode, MacroEvent, MacroEventKind,
-    MacroMode, MacroSettings, Mapping, MappingAction, Profile, StickTransformMapping,
-    MACRO_TAP_RELEASE_MS,
+    resolve_group_paths, ActivatorKind, ActivatorSettings, AnalogTuning, CommandAction,
+    CommandSettings, DigitalStickMapping, LayerActivation, LayerActivationMode, MacroEvent,
+    MacroEventKind, MacroMode, MacroSettings, Mapping, MappingAction, Profile,
+    StickTransformMapping, MACRO_TAP_RELEASE_MS,
 };
 use crate::{log_info, log_warn};
 use anyhow::{anyhow, Context, Result};
@@ -45,7 +46,7 @@ pub struct RemapReport {
 
 pub struct RemapRuntime {
     profile: Profile,
-    source: Device,
+    sources: Vec<Device>,
     virtual_pad: VirtualDevice,
     layers: Vec<RuntimeLayer>,
     held_layers: HashSet<usize>,
@@ -232,11 +233,32 @@ impl RemapRuntime {
             ));
         }
 
-        let mut source = Device::open(&options.source_device_path)
-            .with_context(|| format!("failed to open {}", options.source_device_path))?;
-        source
-            .set_nonblocking(true)
-            .context("failed to make source device nonblocking")?;
+        let mut sources = vec![open_source(
+            &options.source_device_path,
+            options.profile.grab_source,
+        )?];
+
+        // Open any grouped source devices and merge them into the same virtual
+        // controller.
+        if !options.profile.groups.is_empty() {
+            let available = list_devices().unwrap_or_default();
+            let extra_paths = resolve_group_paths(
+                &options.profile.groups,
+                &available,
+                &[options.source_device_path.clone()],
+            );
+            for path in extra_paths {
+                match open_source(&path, options.profile.grab_source) {
+                    Ok(device) => {
+                        log_info!("remap", "grouped source device {path}");
+                        sources.push(device);
+                    }
+                    Err(error) => {
+                        log_warn!("remap", "failed to open grouped device {path}: {error}")
+                    }
+                }
+            }
+        }
 
         let mut virtual_pad =
             create_virtual_pad(&options.profile).context("failed to create virtual pad")?;
@@ -251,17 +273,14 @@ impl RemapRuntime {
             })
             .unwrap_or_default();
 
-        if options.profile.grab_source {
-            source.grab().context("failed to grab source device")?;
-        }
-
         log_info!(
             "remap",
-            "applied profile {} (output {}, grab={}) on {}; virtual nodes: {}",
+            "applied profile {} (output {}, grab={}) on {} ({} source(s)); virtual nodes: {}",
             options.profile.id,
             options.profile.output_type,
             options.profile.grab_source,
             options.source_device_path,
+            sources.len(),
             if virtual_nodes.is_empty() {
                 "none".to_string()
             } else {
@@ -299,7 +318,7 @@ impl RemapRuntime {
 
         Ok(Self {
             profile: options.profile,
-            source,
+            sources,
             virtual_pad,
             layers,
             held_layers: HashSet::new(),
@@ -341,18 +360,18 @@ impl RemapRuntime {
     pub fn pump_once(&mut self) -> Result<()> {
         self.reap_command_children();
 
-        let had_events;
-        let events = match self.source.fetch_events() {
-            Ok(events) => {
-                had_events = true;
-                events.collect::<Vec<_>>()
+        let mut had_events = false;
+        let mut events = Vec::new();
+        for source in &mut self.sources {
+            match source.fetch_events() {
+                Ok(iter) => {
+                    had_events = true;
+                    events.extend(iter);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(error) => return Err(error).context("failed reading source events"),
             }
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                had_events = false;
-                Vec::new()
-            }
-            Err(error) => return Err(error).context("failed reading source events"),
-        };
+        }
 
         let mut output = Vec::new();
         for event in events {
@@ -1370,6 +1389,19 @@ fn digital_axis_direction(unit_value: f64, threshold: f64) -> i32 {
     } else {
         0
     }
+}
+
+fn open_source(path: &str, grab: bool) -> Result<Device> {
+    let mut source = Device::open(path).with_context(|| format!("failed to open {path}"))?;
+    source
+        .set_nonblocking(true)
+        .with_context(|| format!("failed to make source device {path} nonblocking"))?;
+    if grab {
+        source
+            .grab()
+            .with_context(|| format!("failed to grab source device {path}"))?;
+    }
+    Ok(source)
 }
 
 fn create_virtual_pad(profile: &Profile) -> Result<VirtualDevice> {

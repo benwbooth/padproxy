@@ -255,6 +255,20 @@ glyphs, while keyboard/mouse capabilities are added when the profile targets
 them. Select the output per profile with the `output:` key (or in the GUI), and
 list every available output with `padproxyctl list-outputs`.
 
+A profile can also group several physical devices into one virtual controller.
+Add a `group:` list of device matchers (same fields as `match:`); each matcher
+opens an additional source device whose input is merged into the same virtual
+controller. Matchers resolve to distinct devices in order, so two same-type
+controllers become ordered group members:
+
+```yaml
+match:
+  name: "Wireless Controller"
+group:
+  - name: "Wireless Controller"   # a second controller of the same type
+  - name: "Keyboard"
+```
+
 Example:
 
 ```yaml

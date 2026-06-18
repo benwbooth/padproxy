@@ -308,6 +308,8 @@ pub struct Profile {
     pub name: String,
     pub description: String,
     pub device_match: DeviceMatch,
+    /// Additional source devices grouped into the same virtual controller.
+    pub groups: Vec<DeviceMatch>,
     pub process_match: ProcessMatch,
     pub output_type: String,
     pub passthrough: bool,
@@ -325,6 +327,8 @@ struct RawProfile {
     description: Option<String>,
     #[serde(default)]
     r#match: DeviceMatch,
+    #[serde(default)]
+    group: Vec<DeviceMatch>,
     process: Option<RawStringOrList>,
     output: Option<RawOutput>,
     passthrough: Option<bool>,
@@ -653,6 +657,29 @@ impl DeviceMatch {
         }
         true
     }
+}
+
+/// Resolve grouped device matchers to source device paths.
+///
+/// Each matcher picks the first available device it matches, skipping any path
+/// in `exclude_paths` and any device already chosen by an earlier matcher (so a
+/// group of two same-type controllers resolves to two distinct devices).
+pub fn resolve_group_paths(
+    matchers: &[DeviceMatch],
+    devices: &[DeviceInfo],
+    exclude_paths: &[String],
+) -> Vec<String> {
+    let mut chosen: Vec<String> = Vec::new();
+    for matcher in matchers {
+        if let Some(device) = devices.iter().find(|device| {
+            matcher.matches(device)
+                && !exclude_paths.contains(&device.path)
+                && !chosen.contains(&device.path)
+        }) {
+            chosen.push(device.path.clone());
+        }
+    }
+    chosen
 }
 
 impl Profile {
@@ -1091,6 +1118,7 @@ pub fn parse_profile_bytes(bytes: &[u8], source_path: &Path) -> Result<Profile> 
         name,
         description: raw.description.unwrap_or_default(),
         device_match: raw.r#match,
+        groups: raw.group,
         process_match: ProcessMatch {
             patterns: raw
                 .process
@@ -2860,6 +2888,66 @@ mappings:
             assert_eq!(command.action, CommandAction::RemapOff);
             assert!(command.command_line.is_empty());
         }
+    }
+
+    #[test]
+    fn resolves_grouped_device_paths() {
+        use super::{resolve_group_paths, DeviceMatch};
+        use crate::devices::DeviceInfo;
+
+        fn device(path: &str, name: &str, vendor: u16) -> DeviceInfo {
+            DeviceInfo {
+                id: format!("id:{path}"),
+                name: name.to_string(),
+                path: path.to_string(),
+                device_kind: "physical".to_string(),
+                phys: String::new(),
+                uniq: String::new(),
+                bus: 0,
+                vendor,
+                product: 0,
+                version: 0,
+                capabilities: Vec::new(),
+            }
+        }
+
+        let devices = vec![
+            device("/dev/input/event1", "Wireless Controller", 0x054c),
+            device("/dev/input/event2", "Wireless Controller", 0x054c),
+            device("/dev/input/event3", "Keyboard", 0x1234),
+        ];
+
+        let profile = parse_profile_bytes(
+            br#"
+id: grouped
+match:
+  name: "Wireless Controller"
+group:
+  - name: "Wireless Controller"
+  - name: "Keyboard"
+mappings: []
+"#,
+            Path::new("grouped.yaml"),
+        )
+        .unwrap();
+        assert_eq!(profile.groups.len(), 2);
+
+        // The primary controller (event1) is excluded; the group resolves the
+        // second controller and the keyboard, each distinct.
+        let paths = resolve_group_paths(
+            &profile.groups,
+            &devices,
+            &["/dev/input/event1".to_string()],
+        );
+        assert_eq!(paths, vec!["/dev/input/event2", "/dev/input/event3"]);
+
+        // With no available second controller, an unmatched matcher is skipped.
+        let only_keyboard = vec![device("/dev/input/event3", "Keyboard", 0x1234)];
+        let matchers = vec![DeviceMatch {
+            name: Some("Wireless Controller".to_string()),
+            ..Default::default()
+        }];
+        assert!(resolve_group_paths(&matchers, &only_keyboard, &[]).is_empty());
     }
 
     #[test]
