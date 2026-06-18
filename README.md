@@ -55,6 +55,13 @@ Run the Qt interface:
 nix develop --command cargo run --bin padproxy
 ```
 
+Show the crosshair overlay (a transparent, always-on-top, click-through
+full-screen crosshair):
+
+```sh
+nix develop --command cargo run --bin padproxy -- --overlay crosshair
+```
+
 List devices, outputs, profiles, and controller batteries:
 
 ```sh

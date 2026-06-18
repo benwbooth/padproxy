@@ -10,6 +10,25 @@ extern "C" {
     fn padproxy_register_qml_types();
 }
 
+const QML_BASE: &str = "qrc:/qt/qml/com/benwbooth/padproxy/qml";
+
+/// Pick the root QML file from CLI args. `--overlay <name>` loads an overlay
+/// window (e.g. `crosshair`); otherwise the main window is shown.
+fn select_qml_file() -> String {
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(index) = args.iter().position(|arg| arg == "--overlay") {
+        if let Some(name) = args.get(index + 1) {
+            match name.as_str() {
+                "crosshair" => return format!("{QML_BASE}/crosshair.qml"),
+                other => eprintln!("PadProxy: unknown overlay '{other}', showing main window"),
+            }
+        } else {
+            eprintln!("PadProxy: --overlay requires a name (e.g. crosshair)");
+        }
+    }
+    format!("{QML_BASE}/main.qml")
+}
+
 fn main() {
     padproxy_gui::gui_bridge::init_qt_static_modules();
     unsafe {
@@ -18,7 +37,7 @@ fn main() {
 
     let mut app = QGuiApplication::new();
     let mut engine = QQmlApplicationEngine::new();
-    let qml_url = QUrl::from("qrc:/qt/qml/com/benwbooth/padproxy/qml/main.qml");
+    let qml_url = QUrl::from(select_qml_file().as_str());
     let object_created = Arc::new(AtomicBool::new(false));
 
     if let Some(engine) = engine.as_mut() {

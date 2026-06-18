@@ -206,7 +206,9 @@ Source pages consulted:
 - Desktop overlay.
 - Dynamic active-layer display.
 - Radial menu.
-- Crosshair overlay.
+- Crosshair overlay. Basic crosshair done: `padproxy --overlay crosshair`
+  shows a transparent, always-on-top, click-through full-screen window that
+  draws a center crosshair.
 - Screen magnifier.
 
 ## Automation and Integration
