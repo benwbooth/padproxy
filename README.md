@@ -270,6 +270,38 @@ nix develop --command cargo run --bin padproxyctl -- launch \
   -- retroarch -L /path/to/core.so /path/to/game.nes
 ```
 
+## Adaptive controller scenarios
+
+A profile can adapt to whatever controllers are connected. `match:` accepts a
+**ranked list** of matchers — the first one that matches a connected device
+becomes the source controller — and `hide:` lists controllers to grab (hide)
+from games so only your chosen/virtual controllers show through:
+
+```yaml
+id: my-scenario
+match:
+  - serial: "AA:BB:CC:DD:EE:FF"   # my exact controller (highest priority)
+  - name: "DualSense"             # else any DualSense
+  - controller: true              # else any gamepad
+hide:
+  - name: "Steam Virtual"         # keep Steam's virtual pads out of the game
+output:
+  type: xbox360
+```
+
+Preview how a profile resolves against the controllers plugged in right now:
+
+```sh
+nix develop --command cargo run --bin padproxyctl -- resolve --profile my-scenario
+```
+
+Then apply it without naming a controller — it picks the best match itself and
+hides the listed devices:
+
+```sh
+nix develop --command cargo run --bin padproxyctl -- apply --profile my-scenario
+```
+
 ## Profiles
 
 Profiles are loaded from:

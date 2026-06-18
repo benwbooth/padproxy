@@ -57,6 +57,8 @@ pub struct RemapRuntime {
     sources: Vec<Device>,
     /// Per-source input remap (sub-config), aligned with `sources`.
     source_remaps: Vec<HashMap<EventCode, EventCode>>,
+    /// Grabbed-but-ignored devices kept hidden from games for this profile.
+    hidden_devices: Vec<Device>,
     virtual_pad: VirtualDevice,
     /// Additional virtual pads that mirror the primary pad's output.
     extra_pads: Vec<VirtualDevice>,
@@ -269,6 +271,7 @@ impl RemapRuntime {
         )?];
         // Per-source input remap (sub-config); the primary source has none.
         let mut source_remaps: Vec<HashMap<EventCode, EventCode>> = vec![HashMap::new()];
+        let mut opened_paths = vec![options.source_device_path.clone()];
 
         // Open any grouped source devices and merge them into the same virtual
         // controller, each with its optional sub-config remap.
@@ -283,6 +286,7 @@ impl RemapRuntime {
                 match open_source(&source.path, options.profile.grab_source) {
                     Ok(device) => {
                         log_info!("remap", "grouped source device {}", source.path);
+                        opened_paths.push(source.path.clone());
                         sources.push(device);
                         source_remaps.push(source.remap.into_iter().collect());
                     }
@@ -291,6 +295,28 @@ impl RemapRuntime {
                         "failed to open grouped device {}: {error}",
                         source.path
                     ),
+                }
+            }
+        }
+
+        // Hide any devices the profile's `hide` list matches by grabbing them so
+        // games can't see them (they aren't remapped, just held).
+        let mut hidden_devices: Vec<Device> = Vec::new();
+        if !options.profile.hide.is_empty() {
+            for device in list_devices().unwrap_or_default() {
+                if opened_paths.contains(&device.path) {
+                    continue;
+                }
+                if options.profile.hide.iter().any(|m| m.matches(&device)) {
+                    match open_source(&device.path, true) {
+                        Ok(handle) => {
+                            log_info!("remap", "hiding device {} ({})", device.name, device.path);
+                            hidden_devices.push(handle);
+                        }
+                        Err(error) => {
+                            log_warn!("remap", "failed to hide {}: {error}", device.path)
+                        }
+                    }
                 }
             }
         }
@@ -401,6 +427,7 @@ impl RemapRuntime {
             profile: options.profile,
             sources,
             source_remaps,
+            hidden_devices,
             virtual_pad,
             extra_pads,
             layers,
@@ -452,6 +479,18 @@ impl RemapRuntime {
     pub fn pump_once(&mut self) -> Result<()> {
         self.reap_command_children();
         self.forward_force_feedback()?;
+
+        // Drain hidden devices so their event buffers don't fill; the events are
+        // discarded (the device is hidden, not remapped).
+        for hidden in &mut self.hidden_devices {
+            match hidden.fetch_events() {
+                Ok(events) => {
+                    let _ = events.count();
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(_) => {}
+            }
+        }
 
         let mut had_events = false;
         let mut events = Vec::new();

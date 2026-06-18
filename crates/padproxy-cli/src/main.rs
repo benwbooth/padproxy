@@ -140,14 +140,18 @@ enum Command {
     Remap {
         #[arg(long)]
         profile: String,
+        /// Controller to remap. When omitted, it is resolved from the profile's
+        /// ranked `match:` list against connected devices.
         #[arg(long)]
-        controller: String,
+        controller: Option<String>,
     },
     Apply {
         #[arg(long)]
         profile: String,
+        /// Controller to remap. When omitted, it is resolved from the profile's
+        /// ranked `match:` list against connected devices.
         #[arg(long)]
-        controller: String,
+        controller: Option<String>,
     },
     Launch {
         /// Profile id/name. When omitted, the profile is auto-selected by
@@ -261,7 +265,10 @@ fn main() -> Result<()> {
             let resolution = padproxy_core::profiles::resolve_scenario(&profile, &devices);
             match (&resolution.primary, resolution.primary_rank) {
                 (Some(device), Some(rank)) => {
-                    println!("primary\t{}\t{}\t(matcher #{})", device.name, device.path, rank);
+                    println!(
+                        "primary\t{}\t{}\t(matcher #{})",
+                        device.name, device.path, rank
+                    );
                 }
                 _ => println!("primary\t(none connected matched this profile)"),
             }
@@ -345,7 +352,7 @@ fn main() -> Result<()> {
         | Command::Apply {
             profile,
             controller,
-        } => run_foreground_remap(&profile, &controller),
+        } => run_foreground_remap(&profile, controller.as_deref()),
     }
 }
 
@@ -420,9 +427,24 @@ fn import_profile(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn run_foreground_remap(profile: &str, controller: &str) -> Result<()> {
+fn run_foreground_remap(profile: &str, controller: Option<&str>) -> Result<()> {
     let profile = find_profile(profile)?;
-    let source_device_path = resolve_device_path(controller)?;
+    let source_device_path = match controller {
+        Some(selector) => resolve_device_path(selector)?,
+        None => {
+            // Resolve the source from the profile's ranked matchers.
+            let devices = list_devices()?;
+            let resolution = padproxy_core::profiles::resolve_scenario(&profile, &devices);
+            let device = resolution.primary.ok_or_else(|| {
+                anyhow!(
+                    "no connected controller matched profile {}; pass --controller to choose one",
+                    profile.id
+                )
+            })?;
+            eprintln!("Resolved controller: {} ({})", device.name, device.path);
+            device.path
+        }
+    };
     run_foreground_profile(profile, source_device_path)
 }
 

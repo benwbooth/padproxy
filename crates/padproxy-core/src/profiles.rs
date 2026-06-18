@@ -799,7 +799,10 @@ pub fn resolve_scenario(profile: &Profile, devices: &[DeviceInfo]) -> ScenarioRe
 /// stick axes in its capabilities.
 fn device_looks_like_controller(device: &DeviceInfo) -> bool {
     let has_face = device.capabilities.iter().any(|cap| {
-        matches!(cap.as_str(), "BTN_SOUTH" | "BTN_EAST" | "BTN_NORTH" | "BTN_WEST")
+        matches!(
+            cap.as_str(),
+            "BTN_SOUTH" | "BTN_EAST" | "BTN_NORTH" | "BTN_WEST"
+        )
     });
     let has_xy = device.capabilities.iter().any(|cap| cap == "ABS_X")
         && device.capabilities.iter().any(|cap| cap == "ABS_Y");
