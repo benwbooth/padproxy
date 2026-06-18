@@ -218,6 +218,7 @@ pub fn capture_event_code(event: InputEvent) -> Option<EventCode> {
     match code.kind {
         EventKind::Key if event.value() != 0 => Some(code),
         EventKind::Absolute if event.value() != 0 => Some(code),
+        EventKind::Relative if event.value() != 0 => Some(code),
         _ => None,
     }
 }

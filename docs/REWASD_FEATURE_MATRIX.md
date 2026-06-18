@@ -48,7 +48,8 @@ Source pages consulted:
   mappings done; relative mouse-axis output is available in YAML macros and
   direct analog-axis mappings.
 - Keyboard to controller mappings.
-- Mouse to controller mappings.
+- Mouse to controller mappings. Basic mouse-button to controller-button
+  mappings and relative mouse-motion to centered virtual-stick mappings done.
 - Native/hardware mappings that do not create an emulated device.
 - Virtual mappings that emit through a virtual device.
 - Mute physical input while virtual output is active.
@@ -116,7 +117,8 @@ Source pages consulted:
 - Digital 8-way stick mode. Basic stick-pair to virtual D-pad output done.
 - Diagonal stick mappings. Basic diagonal output done through digital stick
   X/Y output.
-- Mouse-to-stick conversion.
+- Mouse-to-stick conversion. Basic relative mouse-axis to centered virtual
+  stick-axis conversion done with automatic recentering.
 - Stick-to-mouse conversion. Basic direct analog-axis to relative mouse-axis
   mappings done.
 - Per-axis sensitivity. Basic per-axis sensitivity done.

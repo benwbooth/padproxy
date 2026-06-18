@@ -1050,10 +1050,29 @@ fn parse_mappings(mappings: Option<Vec<RawMapping>>, context: &str) -> Result<Ve
                         to.name()
                     ));
                 }
-                if to.kind == EventKind::Relative && from.kind != EventKind::Absolute {
+                if to.kind == EventKind::Relative
+                    && !matches!(from.kind, EventKind::Absolute | EventKind::Relative)
+                {
                     return Err(anyhow!(
                         "relative target event {} in {context} requires an absolute-axis source or a macro event with value",
                         to.name()
+                    ));
+                }
+                if from.kind == EventKind::Relative
+                    && to.kind == EventKind::Absolute
+                    && (!is_mouse_motion_axis(from) || !is_mouse_stick_axis(to))
+                {
+                    return Err(anyhow!(
+                        "mouse-to-stick mapping from {} in {context} must use rel:x or rel:y as the source and abs:x, abs:y, abs:rx, or abs:ry as the centered virtual stick target",
+                        mapping.from
+                    ));
+                }
+                if from.kind == EventKind::Relative
+                    && !matches!(to.kind, EventKind::Absolute | EventKind::Relative)
+                {
+                    return Err(anyhow!(
+                        "relative source event {} in {context} can only map to a relative mouse axis or centered virtual stick axis",
+                        mapping.from
                     ));
                 }
                 to
@@ -1126,6 +1145,17 @@ fn parse_mappings(mappings: Option<Vec<RawMapping>>, context: &str) -> Result<Ve
         });
     }
     Ok(parsed)
+}
+
+fn is_mouse_motion_axis(event: EventCode) -> bool {
+    matches!(event.name().as_str(), "rel:x" | "rel:y")
+}
+
+fn is_mouse_stick_axis(event: EventCode) -> bool {
+    matches!(
+        event.name().as_str(),
+        "abs:x" | "abs:y" | "abs:rx" | "abs:ry"
+    )
 }
 
 fn parse_mapping_action(value: Option<&str>) -> Result<MappingAction> {
@@ -2618,6 +2648,69 @@ mappings:
         assert_eq!(macro_settings.events[2].kind, MacroEventKind::Relative);
         assert_eq!(macro_settings.events[2].code_name, "rel:wheel");
         assert_eq!(macro_settings.events[2].value, -1);
+    }
+
+    #[test]
+    fn parses_mouse_to_stick_mappings() {
+        let profile = parse_profile_bytes(
+            br#"
+id: mouse-to-stick
+mappings:
+  - from: rel:x
+    to: abs:rx
+  - from: rel:y
+    to: abs:ry
+"#,
+            Path::new("mouse-to-stick.yaml"),
+        )
+        .unwrap();
+
+        assert_eq!(profile.mappings[0].from_name, "rel:x");
+        assert_eq!(profile.mappings[0].to_name, "abs:rx");
+        assert_eq!(profile.mappings[1].from_name, "rel:y");
+        assert_eq!(profile.mappings[1].to_name, "abs:ry");
+
+        let wheel_error = parse_profile_bytes(
+            br#"
+id: bad-mouse-to-stick-source
+mappings:
+  - from: rel:wheel
+    to: abs:x
+"#,
+            Path::new("bad-mouse-to-stick-source.yaml"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(wheel_error.contains("rel:x or rel:y"), "{wheel_error}");
+
+        let target_error = parse_profile_bytes(
+            br#"
+id: bad-mouse-to-stick-target
+mappings:
+  - from: rel:x
+    to: abs:z
+"#,
+            Path::new("bad-mouse-to-stick-target.yaml"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            target_error.contains("centered virtual stick"),
+            "{target_error}"
+        );
+
+        let button_error = parse_profile_bytes(
+            br#"
+id: bad-relative-button-target
+mappings:
+  - from: rel:x
+    to: btn:south
+"#,
+            Path::new("bad-relative-button-target.yaml"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(button_error.contains("relative source"), "{button_error}");
     }
 
     #[test]

@@ -152,6 +152,12 @@ ApplicationWindow {
         "abs:hat0x",
         "abs:hat0y"
     ]
+    property var virtualStickAxisCodes: [
+        "abs:x",
+        "abs:y",
+        "abs:rx",
+        "abs:ry"
+    ]
     property var stickPairOptions: [
         { label: "Left Stick", xAxisCode: "abs:x", yAxisCode: "abs:y" },
         { label: "Right Stick", xAxisCode: "abs:rx", yAxisCode: "abs:ry" }
@@ -162,6 +168,7 @@ ApplicationWindow {
         "rel:wheel",
         "rel:hwheel"
     ]
+    property var sourceEventCodes: eventCodes.concat(relativeEventCodes)
     property var buttonEventCodes: [
         "btn:south",
         "btn:east",
@@ -471,6 +478,10 @@ ApplicationWindow {
         return root.centeredAnalogAxisCodes.indexOf(code) >= 0
     }
 
+    function isVirtualStickAxisCode(code) {
+        return root.virtualStickAxisCodes.indexOf(code) >= 0
+    }
+
     function centeredAnalogAxisCode(code, fallback) {
         return root.isCenteredAnalogAxisCode(code) ? code : fallback
     }
@@ -553,6 +564,8 @@ ApplicationWindow {
     function mappingTargetCodes(action, fromCode) {
         if (action === "macro")
             return root.keyEventCodes
+        if (root.isRelativeCode(fromCode))
+            return root.virtualStickAxisCodes.concat(root.relativeEventCodes)
         if (root.isAnalogAxisCode(fromCode))
             return root.eventCodes.concat(root.relativeEventCodes)
         return root.eventCodes
@@ -1311,7 +1324,13 @@ ApplicationWindow {
             if (root.keyEventCodes.indexOf(code) < 0)
                 mappingsModel.setProperty(root.selectedMappingIndex, "activatorKind", "press")
             const row = mappingsModel.get(root.selectedMappingIndex)
-            if (!root.isAnalogAxisCode(code) && root.isRelativeCode(row.toCode))
+            if (root.isRelativeCode(code)
+                    && !root.isVirtualStickAxisCode(row.toCode)
+                    && !root.isRelativeCode(row.toCode))
+                mappingsModel.setProperty(root.selectedMappingIndex, "toCode", code === "rel:y" ? "abs:ry" : "abs:rx")
+            if (!root.isAnalogAxisCode(code)
+                    && !root.isRelativeCode(code)
+                    && root.isRelativeCode(row.toCode))
                 mappingsModel.setProperty(root.selectedMappingIndex, "toCode", "btn:south")
         }
     }
@@ -1590,7 +1609,7 @@ ApplicationWindow {
                 return
             }
 
-            if (root.eventCodes.indexOf(code) >= 0)
+            if (root.sourceEventCodes.indexOf(code) >= 0)
                 root.updateSelectedMapping(code)
             root.stopHook()
         }
@@ -2652,8 +2671,8 @@ ApplicationWindow {
                                             spacing: 8
 
                                             ComboBox {
-                                                model: root.eventCodes
-                                                currentIndex: Math.max(0, root.eventCodes.indexOf(fromCode))
+                                                model: root.sourceEventCodes
+                                                currentIndex: Math.max(0, root.sourceEventCodes.indexOf(fromCode))
                                                 Layout.fillWidth: true
                                                 onPressedChanged: {
                                                     if (pressed) {
@@ -2667,7 +2686,13 @@ ApplicationWindow {
                                                     mappingsModel.setProperty(index, "fromCode", currentText)
                                                     if (root.keyEventCodes.indexOf(currentText) < 0)
                                                         mappingsModel.setProperty(index, "activatorKind", "press")
-                                                    if (!root.isAnalogAxisCode(currentText) && root.isRelativeCode(toCode))
+                                                    if (root.isRelativeCode(currentText)
+                                                            && !root.isVirtualStickAxisCode(toCode)
+                                                            && !root.isRelativeCode(toCode))
+                                                        mappingsModel.setProperty(index, "toCode", currentText === "rel:y" ? "abs:ry" : "abs:rx")
+                                                    if (!root.isAnalogAxisCode(currentText)
+                                                            && !root.isRelativeCode(currentText)
+                                                            && root.isRelativeCode(toCode))
                                                         mappingsModel.setProperty(index, "toCode", "btn:south")
                                                 }
                                                 ToolTip.visible: hovered

@@ -98,6 +98,8 @@ analog panel tunes virtual axes with deadzone, sensitivity, inversion, and
 output range controls, plus linear, soft, aggressive, and custom exponent
 response curves. Analog zone rows can hold a virtual button, keyboard key, or
 mouse button while an axis is inside a low, medium, high, or custom range.
+Relative mouse motion sources can map to virtual stick axes, with automatic
+recentering when motion stops.
 Stick rotation rows rotate left or right stick output by degrees, and the
 swap option exchanges left and right virtual stick output.
 Digital stick rows convert a stick pair into the virtual D-pad with 8-way
@@ -179,6 +181,10 @@ mappings:
     to: rel:x
   - from: abs:ry
     to: rel:y
+  - from: rel:x
+    to: abs:rx
+  - from: rel:y
+    to: abs:ry
   - from: btn:start
     action: macro
     macro:

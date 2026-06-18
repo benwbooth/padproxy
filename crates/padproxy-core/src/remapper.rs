@@ -21,6 +21,11 @@ use std::time::{Duration, Instant};
 const RELATIVE_AXIS_INTERVAL: Duration = Duration::from_millis(8);
 const RELATIVE_AXIS_MAX_STEP: f64 = 20.0;
 const DEFAULT_RELATIVE_AXIS_DEADZONE: f64 = 0.12;
+const MOUSE_STICK_DELTA_SCALE: f64 = 0.04;
+const MOUSE_STICK_DECAY_DELAY: Duration = Duration::from_millis(20);
+const MOUSE_STICK_DECAY_INTERVAL: Duration = Duration::from_millis(8);
+const MOUSE_STICK_DECAY_FACTOR: f64 = 0.70;
+const MOUSE_STICK_CENTER_EPSILON: f64 = 0.01;
 
 pub struct LaunchOptions {
     pub profile: Profile,
@@ -61,6 +66,7 @@ pub struct RemapRuntime {
     digital_stick_sources: HashMap<EventCode, Vec<usize>>,
     digital_stick_states: Vec<DigitalStickState>,
     relative_axis_states: HashMap<EventCode, RelativeAxisState>,
+    mouse_stick_states: HashMap<EventCode, MouseStickState>,
     command_children: Vec<Child>,
     virtual_nodes: Vec<String>,
 }
@@ -119,6 +125,13 @@ struct RelativeAxisState {
     unit_value: f64,
     remainder: f64,
     next_emit: Instant,
+}
+
+struct MouseStickState {
+    target: EventCode,
+    unit_value: f64,
+    output_value: i32,
+    next_decay: Instant,
 }
 
 struct PendingActivator {
@@ -283,6 +296,7 @@ impl RemapRuntime {
             digital_stick_sources,
             digital_stick_states,
             relative_axis_states: HashMap::new(),
+            mouse_stick_states: HashMap::new(),
             command_children: Vec::new(),
             virtual_nodes,
         })
@@ -329,6 +343,7 @@ impl RemapRuntime {
         self.push_due_macro_events(&mut output);
         self.push_due_turbo_events(&mut output);
         self.push_due_relative_axis_events(&mut output);
+        self.push_due_mouse_stick_events(&mut output);
 
         if !output.is_empty() {
             self.virtual_pad.emit(&output)?;
@@ -381,7 +396,7 @@ impl RemapRuntime {
         match source_event.kind {
             EventKind::Key => self.push_mapped_key_event(source_event, value, output),
             EventKind::Absolute => self.push_mapped_absolute_event(source_event, value, output),
-            EventKind::Relative => {}
+            EventKind::Relative => self.push_mapped_relative_event(source_event, value, output),
         }
     }
 
@@ -635,6 +650,89 @@ impl RemapRuntime {
         }
         let value = self.apply_analog_tuning(source_event, resolved.target, value);
         push_input_event(output, resolved.target, value);
+    }
+
+    fn push_mapped_relative_event(
+        &mut self,
+        source_event: EventCode,
+        value: i32,
+        output: &mut Vec<InputEvent>,
+    ) {
+        let resolved = self.resolved_mapping(source_event);
+        if resolved.action != MappingAction::Map
+            || (!self.profile.passthrough && !resolved.mapped)
+            || !virtual_output_supports(resolved.target)
+        {
+            self.stop_mouse_stick_state(source_event, output);
+            return;
+        }
+
+        if resolved.target.kind == EventKind::Absolute
+            && is_mouse_motion_axis(source_event)
+            && is_mouse_stick_axis(resolved.target)
+        {
+            self.update_mouse_stick_state(source_event, resolved.target, value, output);
+            return;
+        }
+
+        self.stop_mouse_stick_state(source_event, output);
+        if resolved.target.kind == EventKind::Relative {
+            push_input_event(output, resolved.target, value);
+        }
+    }
+
+    fn update_mouse_stick_state(
+        &mut self,
+        source_event: EventCode,
+        target_event: EventCode,
+        delta: i32,
+        output: &mut Vec<InputEvent>,
+    ) {
+        if delta == 0 {
+            return;
+        }
+
+        let now = Instant::now();
+        let delta_unit = mouse_delta_to_stick_unit(delta);
+        if delta_unit.abs() <= f64::EPSILON {
+            return;
+        }
+
+        let state = self
+            .mouse_stick_states
+            .entry(source_event)
+            .or_insert(MouseStickState {
+                target: target_event,
+                unit_value: 0.0,
+                output_value: 0,
+                next_decay: now + MOUSE_STICK_DECAY_DELAY,
+            });
+
+        if state.target != target_event {
+            if state.output_value != 0 {
+                push_input_event(output, state.target, 0);
+            }
+            state.target = target_event;
+            state.unit_value = 0.0;
+            state.output_value = 0;
+        }
+
+        state.unit_value = (state.unit_value + delta_unit).clamp(-1.0, 1.0);
+        state.next_decay = now + MOUSE_STICK_DECAY_DELAY;
+        let next_value = unit_to_absolute_axis_value(state.target, state.unit_value);
+        if next_value != state.output_value {
+            state.output_value = next_value;
+            push_input_event(output, state.target, next_value);
+        }
+    }
+
+    fn stop_mouse_stick_state(&mut self, source_event: EventCode, output: &mut Vec<InputEvent>) {
+        let Some(state) = self.mouse_stick_states.remove(&source_event) else {
+            return;
+        };
+        if state.output_value != 0 {
+            push_input_event(output, state.target, 0);
+        }
     }
 
     fn push_stick_transform_events(
@@ -1027,6 +1125,33 @@ impl RemapRuntime {
         }
     }
 
+    fn push_due_mouse_stick_events(&mut self, output: &mut Vec<InputEvent>) {
+        let now = Instant::now();
+        let sources = self.mouse_stick_states.keys().copied().collect::<Vec<_>>();
+
+        for source in sources {
+            let mut remove_state = false;
+            if let Some(state) = self.mouse_stick_states.get_mut(&source) {
+                if now < state.next_decay {
+                    continue;
+                }
+
+                state.unit_value = mouse_stick_decay_step(state.unit_value);
+                state.next_decay = now + MOUSE_STICK_DECAY_INTERVAL;
+                let next_value = unit_to_absolute_axis_value(state.target, state.unit_value);
+                if next_value != state.output_value {
+                    state.output_value = next_value;
+                    push_input_event(output, state.target, next_value);
+                }
+                remove_state = state.unit_value == 0.0;
+            }
+
+            if remove_state {
+                self.mouse_stick_states.remove(&source);
+            }
+        }
+    }
+
     fn resolved_mapping(&self, source_event: EventCode) -> ResolvedMapping {
         let layer = &self.layers[self.active_layer_index()];
         layer
@@ -1158,6 +1283,30 @@ fn relative_axis_step(unit_value: f64, remainder: &mut f64) -> i32 {
     step as i32
 }
 
+fn is_mouse_motion_axis(event: EventCode) -> bool {
+    matches!(event.name().as_str(), "rel:x" | "rel:y")
+}
+
+fn is_mouse_stick_axis(event: EventCode) -> bool {
+    matches!(
+        event.name().as_str(),
+        "abs:x" | "abs:y" | "abs:rx" | "abs:ry"
+    )
+}
+
+fn mouse_delta_to_stick_unit(delta: i32) -> f64 {
+    (delta as f64 * MOUSE_STICK_DELTA_SCALE).clamp(-1.0, 1.0)
+}
+
+fn mouse_stick_decay_step(unit_value: f64) -> f64 {
+    let next = unit_value * MOUSE_STICK_DECAY_FACTOR;
+    if next.abs() < MOUSE_STICK_CENTER_EPSILON {
+        0.0
+    } else {
+        next
+    }
+}
+
 fn digital_axis_unit_value(
     source_event: EventCode,
     value: i32,
@@ -1279,7 +1428,8 @@ fn profile_output_events(profile: &Profile) -> HashSet<EventCode> {
 #[cfg(test)]
 mod tests {
     use super::{
-        digital_axis_direction, digital_axis_unit_value, profile_output_events, relative_axis_step,
+        digital_axis_direction, digital_axis_unit_value, mouse_delta_to_stick_unit,
+        mouse_stick_decay_step, profile_output_events, relative_axis_step,
         relative_axis_unit_value, rotate_stick_units, unit_to_absolute_axis_value,
     };
     use crate::event_code::parse_event_code;
@@ -1325,6 +1475,26 @@ mappings:
         let events = profile_output_events(&profile);
         assert!(events.contains(&parse_event_code("rel:x").unwrap()));
         assert!(events.contains(&parse_event_code("rel:y").unwrap()));
+    }
+
+    #[test]
+    fn mouse_to_stick_targets_are_virtual_output_capabilities() {
+        let profile = parse_profile_bytes(
+            br#"
+id: mouse-to-stick-output
+mappings:
+  - from: rel:x
+    to: abs:rx
+  - from: rel:y
+    to: abs:ry
+"#,
+            Path::new("mouse-to-stick-output.yaml"),
+        )
+        .unwrap();
+
+        let events = profile_output_events(&profile);
+        assert!(events.contains(&parse_event_code("abs:rx").unwrap()));
+        assert!(events.contains(&parse_event_code("abs:ry").unwrap()));
     }
 
     #[test]
@@ -1389,6 +1559,20 @@ mappings: []
         let mut fractional_remainder = 0.0;
         assert_eq!(relative_axis_step(0.03, &mut fractional_remainder), 0);
         assert_eq!(relative_axis_step(0.03, &mut fractional_remainder), 1);
+    }
+
+    #[test]
+    fn mouse_deltas_become_decaying_stick_units() {
+        assert_eq!(mouse_delta_to_stick_unit(0), 0.0);
+        assert_eq!(mouse_delta_to_stick_unit(100), 1.0);
+        assert_eq!(mouse_delta_to_stick_unit(-100), -1.0);
+
+        let delta = mouse_delta_to_stick_unit(5);
+        assert!((delta - 0.2).abs() < 0.000_001, "{delta}");
+
+        let decayed = mouse_stick_decay_step(1.0);
+        assert!((decayed - 0.7).abs() < 0.000_001, "{decayed}");
+        assert_eq!(mouse_stick_decay_step(0.001), 0.0);
     }
 
     #[test]
