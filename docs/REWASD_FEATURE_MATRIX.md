@@ -243,7 +243,10 @@ Joy-Cons) are tracked separately under Sensors/Grouping.
   exposes a Unix-socket JSON API (status, list profiles/devices/batteries,
   detect, slot management, and live apply/remap-off), and `padproxyctl ctl`
   is a client for it. A DBus front end remains.
-- Per-emulator/game launch integration.
+- Per-emulator/game launch integration. Done: `padproxyctl launch` grabs the
+  controller, applies a profile, and runs the program; `--profile` is optional
+  and auto-selected by matching the launched command against profiles'
+  `process:` patterns.
 - Emergency remap off. Done through a `remap_off` command mapping that stops
   the running remap, releases the virtual device, and ungrabs the source
   controller; during a launch it leaves the launched program running.

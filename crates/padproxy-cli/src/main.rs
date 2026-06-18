@@ -124,8 +124,10 @@ enum Command {
         controller: String,
     },
     Launch {
+        /// Profile id/name. When omitted, the profile is auto-selected by
+        /// matching the launched command against profiles' `process:` patterns.
         #[arg(long)]
-        profile: String,
+        profile: Option<String>,
         #[arg(long)]
         controller: String,
         #[arg(last = true, required = true)]
@@ -271,8 +273,9 @@ fn main() -> Result<()> {
             controller,
             command,
         } => {
-            let profile = find_profile(&profile)?;
+            let profile = resolve_launch_profile(profile.as_deref(), &command)?;
             let source_device_path = resolve_device_path(&controller)?;
+            eprintln!("Launching with profile {}", profile.id);
             let code = launch_with_remap(LaunchOptions {
                 profile,
                 source_device_path,
@@ -288,6 +291,25 @@ fn main() -> Result<()> {
             profile,
             controller,
         } => run_foreground_remap(&profile, &controller),
+    }
+}
+
+/// Resolve the profile for a `launch`: explicit id/name when given, otherwise
+/// match the launched command against profiles' `process:` patterns.
+fn resolve_launch_profile(profile: Option<&str>, command: &[String]) -> Result<Profile> {
+    if let Some(selector) = profile {
+        return find_profile(selector);
+    }
+
+    let program = command
+        .first()
+        .ok_or_else(|| anyhow!("launch command is empty"))?;
+    let profiles = load_profiles(&default_profile_dirs())?;
+    match match_profile(&profiles, &[program.clone()]) {
+        Some((matched, _)) => Ok(matched.clone()),
+        None => Err(anyhow!(
+            "no profile's process patterns matched {program}; pass --profile to choose one"
+        )),
     }
 }
 
