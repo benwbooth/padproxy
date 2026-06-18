@@ -110,6 +110,20 @@ blocklist with:
 nix develop --command cargo run --bin padproxyctl -- list-blocklist
 ```
 
+Share profiles as presets by exporting and importing their YAML:
+
+```sh
+nix develop --command cargo run --bin padproxyctl -- export-profile \
+  --profile nes-2button-xa \
+  --output nes-2button-xa.yaml
+nix develop --command cargo run --bin padproxyctl -- import-profile \
+  --path nes-2button-xa.yaml
+```
+
+`export-profile` writes the profile's YAML (or prints it to stdout when
+`--output` is omitted). `import-profile` validates the preset and installs it
+into `~/.config/padproxy/profiles.d`, named after its profile id.
+
 Run a foreground remap until Ctrl-C:
 
 ```sh

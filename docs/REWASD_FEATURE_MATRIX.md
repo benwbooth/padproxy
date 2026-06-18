@@ -36,7 +36,10 @@ Source pages consulted:
   it in the editor.
 - Apply vs Save: save a config or apply it immediately to a running remap.
 - Remap ON/OFF status.
-- Community preset browser/import/export.
+- Community preset browser/import/export. Basic local import/export done:
+  `padproxyctl export-profile` writes a profile's YAML preset and
+  `padproxyctl import-profile` validates and installs a preset into the user
+  profile directory. The online community browser remains.
 - Background tray/daemon.
 
 ## Mapping Types

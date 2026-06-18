@@ -57,7 +57,7 @@ use cxx_qt::CxxQtType;
 use cxx_qt_lib::QString;
 use padproxy_core::capture::CaptureReader;
 use padproxy_core::remapper::{RemapOptions, RemapRuntime};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread::JoinHandle;
@@ -129,8 +129,11 @@ mappings:\n\
   - from: btn:east\n\
     to: btn:west\n",
         ));
-        this.as_mut()
-            .set_editing_profile_path(QString::from(user_profile_dir().display().to_string()));
+        this.as_mut().set_editing_profile_path(QString::from(
+            padproxy_core::presets::user_profile_dir()
+                .display()
+                .to_string(),
+        ));
         this.as_mut().set_status(QString::from(
             "Editing a new user profile. Save writes to ~/.config/padproxy/profiles.d.",
         ));
@@ -159,7 +162,7 @@ mappings:\n\
     pub fn save_profile(self: Pin<&mut Self>, yaml: QString) {
         let mut this = self;
         let yaml = yaml.to_string();
-        match save_user_profile(&yaml) {
+        match padproxy_core::presets::install_profile(&yaml) {
             Ok(path) => {
                 this.as_mut()
                     .set_editing_profile_path(QString::from(path.display().to_string()));
@@ -441,51 +444,6 @@ fn refresh_into(mut controller: Pin<&mut qobject::PadProxyController>) {
                 .set_status(QString::from(format!("Refresh failed: {error}")));
         }
     }
-}
-
-fn save_user_profile(yaml: &str) -> anyhow::Result<PathBuf> {
-    let yaml = ensure_trailing_newline(yaml.to_string());
-    let profile =
-        padproxy_core::profiles::parse_profile_bytes(yaml.as_bytes(), Path::new("profile.yaml"))?;
-    let id = profile_file_stem(&profile.id)?;
-    let dir = user_profile_dir();
-    std::fs::create_dir_all(&dir)?;
-    let path = dir.join(format!("{id}.yaml"));
-    std::fs::write(&path, yaml)?;
-    Ok(path)
-}
-
-fn user_profile_dir() -> PathBuf {
-    if let Some(config_home) = std::env::var_os("XDG_CONFIG_HOME") {
-        return PathBuf::from(config_home).join("padproxy/profiles.d");
-    }
-
-    if let Some(home) = std::env::var_os("HOME") {
-        return PathBuf::from(home).join(".config/padproxy/profiles.d");
-    }
-
-    PathBuf::from(".").join("profiles")
-}
-
-fn profile_file_stem(id: &str) -> anyhow::Result<String> {
-    let stem = id
-        .chars()
-        .map(|value| {
-            if value.is_ascii_alphanumeric() || matches!(value, '-' | '_' | '.') {
-                value
-            } else {
-                '-'
-            }
-        })
-        .collect::<String>()
-        .trim_matches(['-', '.', '_'])
-        .to_string();
-
-    if stem.is_empty() {
-        anyhow::bail!("profile id must contain at least one letter or number");
-    }
-
-    Ok(stem)
 }
 
 fn ensure_trailing_newline(mut text: String) -> String {

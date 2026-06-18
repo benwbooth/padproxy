@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
 use padproxy_core::autodetect::{
     decide_watch, detect_profile, match_profile, running_process_names, WatchDecision,
@@ -8,6 +8,7 @@ use padproxy_core::devices::DeviceInfo;
 use padproxy_core::linux::{list_devices, resolve_device};
 use padproxy_core::outputs::output_devices;
 use padproxy_core::power::{list_batteries, BatteryInfo};
+use padproxy_core::presets::{export_profile_yaml, install_profile};
 use padproxy_core::profiles::{default_profile_dirs, load_profiles, Profile};
 use padproxy_core::remapper::{launch_with_remap, LaunchOptions, RemapOptions, RemapRuntime};
 use padproxy_core::slots::{
@@ -72,6 +73,16 @@ enum Command {
     Diagnostics {
         #[arg(long)]
         output: Option<PathBuf>,
+    },
+    ExportProfile {
+        #[arg(long)]
+        profile: String,
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+    ImportProfile {
+        #[arg(long)]
+        path: PathBuf,
     },
     Remap {
         #[arg(long)]
@@ -191,6 +202,8 @@ fn main() -> Result<()> {
         Command::ClearSlot { controller, slot } => clear_slot(&controller, slot),
         Command::ApplySlot { controller, slot } => apply_slot(&controller, slot),
         Command::Diagnostics { output } => export_diagnostics(output.as_deref()),
+        Command::ExportProfile { profile, output } => export_profile(&profile, output.as_deref()),
+        Command::ImportProfile { path } => import_profile(&path),
         Command::Launch {
             profile,
             controller,
@@ -221,6 +234,27 @@ fn find_profile(selector: &str) -> Result<Profile> {
         .into_iter()
         .find(|profile| profile.id == selector || profile.name == selector)
         .ok_or_else(|| anyhow!("no profile matched {selector}"))
+}
+
+fn export_profile(selector: &str, output: Option<&Path>) -> Result<()> {
+    let profile = find_profile(selector)?;
+    let yaml = export_profile_yaml(&profile)?;
+    if let Some(output) = output {
+        fs::write(output, &yaml)
+            .with_context(|| format!("failed to write {}", output.display()))?;
+        eprintln!("Exported profile {} to {}", profile.id, output.display());
+    } else {
+        print!("{yaml}");
+    }
+    Ok(())
+}
+
+fn import_profile(path: &Path) -> Result<()> {
+    let yaml =
+        fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
+    let installed = install_profile(&yaml)?;
+    eprintln!("Imported profile to {}", installed.display());
+    Ok(())
 }
 
 fn run_foreground_remap(profile: &str, controller: &str) -> Result<()> {
