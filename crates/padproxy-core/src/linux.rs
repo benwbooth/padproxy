@@ -88,10 +88,52 @@ pub fn resolve_device_info(selector: &str) -> Result<DeviceInfo> {
 
 fn should_show_device(path: &Path, device: &Device, name: &str, device_kind: &str) -> bool {
     name_has_controller_hint(name)
+        || name_has_motion_sensor_hint(name)
         || has_joystick_devlink(path)
         || looks_like_keyboard(device)
         || looks_like_mouse(device)
+        || looks_like_motion_sensor(device)
         || (device_kind == "virtual" && looks_like_controller(device))
+}
+
+fn name_has_motion_sensor_hint(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    [
+        "motion sensor",
+        "motion sensors",
+        "gyro",
+        "accelerometer",
+        "imu",
+    ]
+    .iter()
+    .any(|hint| name.contains(hint))
+}
+
+/// A standalone motion sensor exposes gyro/accelerometer rotation axes
+/// (`ABS_RX/RY/RZ`) without controller face buttons, so it can be grouped with a
+/// controller and mapped (e.g. gyro-to-mouse).
+fn looks_like_motion_sensor(device: &Device) -> bool {
+    let Some(abs) = device.supported_absolute_axes() else {
+        return false;
+    };
+    let has_rotation = abs.contains(AbsoluteAxisCode::ABS_RX)
+        && abs.contains(AbsoluteAxisCode::ABS_RY)
+        && abs.contains(AbsoluteAxisCode::ABS_RZ);
+    let has_face_button = device
+        .supported_keys()
+        .map(|keys| {
+            [
+                KeyCode::BTN_SOUTH,
+                KeyCode::BTN_EAST,
+                KeyCode::BTN_NORTH,
+                KeyCode::BTN_WEST,
+            ]
+            .iter()
+            .any(|code| keys.contains(*code))
+        })
+        .unwrap_or(false);
+
+    has_rotation && !has_face_button
 }
 
 fn looks_like_controller(device: &Device) -> bool {
@@ -370,9 +412,20 @@ fn relative_set_has_mouse_motion(relative_axes: &AttributeSetRef<RelativeAxisCod
 mod tests {
     use super::{
         key_set_has_keyboard_keys, key_set_has_mouse_buttons, name_has_controller_hint,
-        relative_set_has_mouse_motion,
+        name_has_motion_sensor_hint, relative_set_has_mouse_motion,
     };
     use evdev::{AttributeSet, KeyCode, RelativeAxisCode};
+
+    #[test]
+    fn recognizes_motion_sensor_names() {
+        assert!(name_has_motion_sensor_hint(
+            "Sony Interactive Entertainment DualSense Wireless Controller Motion Sensors"
+        ));
+        assert!(name_has_motion_sensor_hint(
+            "Nintendo Switch Pro Controller IMU"
+        ));
+        assert!(!name_has_motion_sensor_hint("USB Keyboard"));
+    }
 
     #[test]
     fn recognizes_controller_families_by_name() {

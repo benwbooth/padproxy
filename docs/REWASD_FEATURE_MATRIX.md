@@ -196,8 +196,11 @@ Joy-Cons) are tracked separately under Sensors/Grouping.
 
 ## Sensors and Haptics
 
-- Gyroscope mappings.
-- Gyro activation only on shift/layer/hold.
+- Gyroscope mappings. Basic gyro support done: motion-sensor devices are now
+  discovered, so a controller's gyro device can be grouped and its rotation
+  axes mapped to mouse or stick output via the analog axis-to-mouse mappings.
+- Gyro activation only on shift/layer/hold. Done via layers: place the gyro
+  axis mappings in a hold/toggle shift layer so they apply only while active.
 - Touchpad zones.
 - Controller vibration settings. Game-driven rumble is forwarded to the source
   controller (see rumble passthrough under Combos/Macros).
