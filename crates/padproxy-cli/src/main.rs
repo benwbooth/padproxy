@@ -72,6 +72,10 @@ enum Command {
         controller: String,
     },
     Detect,
+    Resolve {
+        #[arg(long)]
+        profile: String,
+    },
     Watch {
         #[arg(long)]
         controller: String,
@@ -250,6 +254,25 @@ fn main() -> Result<()> {
         Command::BtEmulate { controller } => {
             let path = resolve_device_path(&controller)?;
             bt_emulate::run(&path)
+        }
+        Command::Resolve { profile } => {
+            let profile = find_profile(&profile)?;
+            let devices = list_devices()?;
+            let resolution = padproxy_core::profiles::resolve_scenario(&profile, &devices);
+            match (&resolution.primary, resolution.primary_rank) {
+                (Some(device), Some(rank)) => {
+                    println!("primary\t{}\t{}\t(matcher #{})", device.name, device.path, rank);
+                }
+                _ => println!("primary\t(none connected matched this profile)"),
+            }
+            if resolution.hidden.is_empty() {
+                println!("hidden\t(none)");
+            } else {
+                for device in &resolution.hidden {
+                    println!("hidden\t{}\t{}", device.name, device.path);
+                }
+            }
+            Ok(())
         }
         Command::Detect => {
             let profiles = load_profiles(&default_profile_dirs())?;

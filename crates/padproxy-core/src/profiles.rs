@@ -24,6 +24,9 @@ pub struct DeviceMatch {
     pub phys: Option<String>,
     pub vendor_id: Option<IdValue>,
     pub product_id: Option<IdValue>,
+    /// When `true`, require the device to look like a gamepad (so a wildcard
+    /// matcher can mean "any controller" rather than any input device).
+    pub controller: Option<bool>,
 }
 
 /// Patterns that identify the game/app a profile is meant for, used for process
@@ -316,6 +319,12 @@ pub struct Profile {
     pub name: String,
     pub description: String,
     pub device_match: DeviceMatch,
+    /// Ranked matchers for the source controller: the first one that matches a
+    /// connected device wins, so a profile adapts to whatever is plugged in.
+    pub match_ranked: Vec<DeviceMatch>,
+    /// Controllers to hide (grab) from games even when they aren't the source,
+    /// so only the chosen/virtual controllers show through.
+    pub hide: Vec<DeviceMatch>,
     /// Additional source devices grouped into the same virtual controller.
     pub groups: Vec<GroupMember>,
     /// Optional touchpad zone configuration.
@@ -338,7 +347,9 @@ struct RawProfile {
     name: Option<String>,
     description: Option<String>,
     #[serde(default)]
-    r#match: DeviceMatch,
+    r#match: RawMatch,
+    #[serde(default)]
+    hide: Vec<DeviceMatch>,
     #[serde(default)]
     group: Vec<RawGroupEntry>,
     touchpad: Option<RawTouchpad>,
@@ -351,6 +362,29 @@ struct RawProfile {
     mappings: Option<Vec<RawMapping>>,
     layers: Option<Vec<RawLayer>>,
     analog: Option<RawAnalogSettings>,
+}
+
+/// `match:` accepts either a single matcher or a ranked list of matchers.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum RawMatch {
+    One(DeviceMatch),
+    Many(Vec<DeviceMatch>),
+}
+
+impl Default for RawMatch {
+    fn default() -> Self {
+        RawMatch::One(DeviceMatch::default())
+    }
+}
+
+impl RawMatch {
+    fn into_ranked(self) -> Vec<DeviceMatch> {
+        match self {
+            RawMatch::One(matcher) => vec![matcher],
+            RawMatch::Many(matchers) => matchers,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -698,8 +732,78 @@ impl DeviceMatch {
                 return false;
             }
         }
+        if self.controller == Some(true) && !device_looks_like_controller(device) {
+            return false;
+        }
         true
     }
+
+    /// True if this matcher restricts at all (otherwise it matches anything).
+    pub fn is_specific(&self) -> bool {
+        self.name.is_some()
+            || self.serial.is_some()
+            || self.phys.is_some()
+            || self.vendor_id.is_some()
+            || self.product_id.is_some()
+            || self.controller.is_some()
+    }
+}
+
+/// The devices a profile resolves to against what is currently connected.
+#[derive(Clone, Debug, Serialize)]
+pub struct ScenarioResolution {
+    /// The source controller chosen by the ranked matchers, if any matched.
+    pub primary: Option<DeviceInfo>,
+    /// Which ranked matcher (0 = highest priority) selected the primary.
+    pub primary_rank: Option<usize>,
+    /// Connected devices matched by the `hide` list (excluding the primary).
+    pub hidden: Vec<DeviceInfo>,
+}
+
+/// Resolve a profile against the connected devices: pick the best-ranked source
+/// controller and the devices to hide. Ranked matchers are tried in order; the
+/// first matcher that matches any connected device wins.
+pub fn resolve_scenario(profile: &Profile, devices: &[DeviceInfo]) -> ScenarioResolution {
+    let matchers: Vec<&DeviceMatch> = if profile.match_ranked.is_empty() {
+        vec![&profile.device_match]
+    } else {
+        profile.match_ranked.iter().collect()
+    };
+
+    let mut primary = None;
+    let mut primary_rank = None;
+    for (rank, matcher) in matchers.iter().enumerate() {
+        if let Some(device) = devices.iter().find(|device| matcher.matches(device)) {
+            primary = Some(device.clone());
+            primary_rank = Some(rank);
+            break;
+        }
+    }
+
+    let primary_path = primary.as_ref().map(|device| device.path.clone());
+    let hidden = devices
+        .iter()
+        .filter(|device| Some(&device.path) != primary_path.as_ref())
+        .filter(|device| profile.hide.iter().any(|matcher| matcher.matches(device)))
+        .cloned()
+        .collect();
+
+    ScenarioResolution {
+        primary,
+        primary_rank,
+        hidden,
+    }
+}
+
+/// A device looks like a controller if it reports gamepad face buttons and
+/// stick axes in its capabilities.
+fn device_looks_like_controller(device: &DeviceInfo) -> bool {
+    let has_face = device.capabilities.iter().any(|cap| {
+        matches!(cap.as_str(), "BTN_SOUTH" | "BTN_EAST" | "BTN_NORTH" | "BTN_WEST")
+    });
+    let has_xy = device.capabilities.iter().any(|cap| cap == "ABS_X")
+        && device.capabilities.iter().any(|cap| cap == "ABS_Y");
+    has_face && has_xy
 }
 
 /// A touchpad zone: a normalized rectangular region mapped to an output.
@@ -1260,11 +1364,16 @@ pub fn parse_profile_bytes(bytes: &[u8], source_path: &Path) -> Result<Profile> 
     let mappings = layers[0].mappings.clone();
     let analog = parse_analog_settings(raw.analog)?;
 
+    let match_ranked = raw.r#match.into_ranked();
+    let device_match = match_ranked.first().cloned().unwrap_or_default();
+
     Ok(Profile {
         id,
         name,
         description: raw.description.unwrap_or_default(),
-        device_match: raw.r#match,
+        device_match,
+        match_ranked,
+        hide: raw.hide,
         groups: parse_group_members(raw.group)?,
         touchpad: parse_touchpad(raw.touchpad)?,
         outputs,
@@ -3114,6 +3223,62 @@ mappings: []
         .unwrap();
         assert_eq!(profile.output_type, "xbox360");
         assert_eq!(profile.outputs, vec!["ds4", "switchpro"]);
+    }
+
+    #[test]
+    fn resolves_scenario_by_rank_and_hide() {
+        use super::resolve_scenario;
+        use crate::devices::DeviceInfo;
+
+        fn pad(path: &str, name: &str, uniq: &str) -> DeviceInfo {
+            DeviceInfo {
+                id: format!("id:{path}"),
+                name: name.to_string(),
+                path: path.to_string(),
+                device_kind: "physical".to_string(),
+                phys: String::new(),
+                uniq: uniq.to_string(),
+                bus: 0,
+                vendor: 0,
+                product: 0,
+                version: 0,
+                capabilities: vec!["BTN_SOUTH".into(), "ABS_X".into(), "ABS_Y".into()],
+            }
+        }
+
+        let profile = parse_profile_bytes(
+            br#"
+id: scenario
+match:
+  - serial: "AA:BB"
+  - name: "DualSense"
+  - name: "*"
+hide:
+  - name: "Steam Virtual"
+mappings: []
+"#,
+            Path::new("scenario.yaml"),
+        )
+        .unwrap();
+        assert_eq!(profile.match_ranked.len(), 3);
+
+        // Highest-rank matcher (exact serial) wins when present.
+        let devices = vec![
+            pad("/dev/input/event1", "Generic Gamepad", "ZZ"),
+            pad("/dev/input/event2", "Sony DualSense", "CC"),
+            pad("/dev/input/event3", "Steam Virtual Gamepad", "SV"),
+            pad("/dev/input/event4", "My Pad", "AA:BB"),
+        ];
+        let res = resolve_scenario(&profile, &devices);
+        assert_eq!(res.primary.as_ref().unwrap().path, "/dev/input/event4");
+        assert_eq!(res.primary_rank, Some(0));
+        assert_eq!(res.hidden.len(), 1);
+        assert_eq!(res.hidden[0].name, "Steam Virtual Gamepad");
+
+        // Without the exact serial, the DualSense (rank 1) is chosen.
+        let res2 = resolve_scenario(&profile, &devices[..3].to_vec());
+        assert_eq!(res2.primary.as_ref().unwrap().name, "Sony DualSense");
+        assert_eq!(res2.primary_rank, Some(1));
     }
 
     #[test]
