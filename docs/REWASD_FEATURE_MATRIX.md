@@ -197,7 +197,9 @@ Joy-Cons) are tracked separately under Sensors/Grouping.
 - Group multiple devices into one virtual controller. Basic grouping done: a
   profile `group:` list of device matchers opens additional source devices and
   merges their input into the same virtual controller.
-- Per-device sub-configs inside a group.
+- Per-device sub-configs inside a group. Basic sub-configs done: each `group:`
+  member can carry a `remap:` of its own input codes (applied before the shared
+  profile mapping), so grouped devices have per-device layouts.
 - Ordered same-type devices, such as Gamepad 1 and Gamepad 2. Basic ordering
   done: group matchers resolve to distinct devices in listed order, so two
   same-type controllers map to ordered group members.

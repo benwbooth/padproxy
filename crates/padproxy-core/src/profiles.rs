@@ -309,7 +309,7 @@ pub struct Profile {
     pub description: String,
     pub device_match: DeviceMatch,
     /// Additional source devices grouped into the same virtual controller.
-    pub groups: Vec<DeviceMatch>,
+    pub groups: Vec<GroupMember>,
     pub process_match: ProcessMatch,
     pub output_type: String,
     /// Additional virtual output devices emitted alongside the primary one.
@@ -330,7 +330,7 @@ struct RawProfile {
     #[serde(default)]
     r#match: DeviceMatch,
     #[serde(default)]
-    group: Vec<DeviceMatch>,
+    group: Vec<RawGroupEntry>,
     process: Option<RawStringOrList>,
     output: Option<RawOutput>,
     #[serde(default)]
@@ -340,6 +340,14 @@ struct RawProfile {
     mappings: Option<Vec<RawMapping>>,
     layers: Option<Vec<RawLayer>>,
     analog: Option<RawAnalogSettings>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawGroupEntry {
+    #[serde(flatten)]
+    device_match: DeviceMatch,
+    #[serde(default)]
+    remap: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -663,24 +671,65 @@ impl DeviceMatch {
     }
 }
 
-/// Resolve grouped device matchers to source device paths.
+/// A grouped device: a matcher plus an optional per-device input sub-config
+/// (a remap of this device's input codes applied before the shared profile).
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct GroupMember {
+    pub device_match: DeviceMatch,
+    /// Input remap pairs (`from` -> `to`) applied to this device's events.
+    pub remap: Vec<(EventCode, EventCode)>,
+}
+
+fn parse_group_members(raw: Vec<RawGroupEntry>) -> Result<Vec<GroupMember>> {
+    raw.into_iter()
+        .map(|entry| {
+            let remap = entry
+                .remap
+                .into_iter()
+                .map(|(from, to)| {
+                    let from = parse_event_code(&from)
+                        .with_context(|| format!("invalid group remap source {from}"))?;
+                    let to = parse_event_code(&to)
+                        .with_context(|| format!("invalid group remap target {to}"))?;
+                    Ok((from, to))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            Ok(GroupMember {
+                device_match: entry.device_match,
+                remap,
+            })
+        })
+        .collect()
+}
+
+/// A grouped source device resolved to an open-able path, with its sub-config.
+#[derive(Clone, Debug)]
+pub struct ResolvedGroupSource {
+    pub path: String,
+    pub remap: Vec<(EventCode, EventCode)>,
+}
+
+/// Resolve grouped members to source device paths plus their sub-config remaps.
 ///
-/// Each matcher picks the first available device it matches, skipping any path
-/// in `exclude_paths` and any device already chosen by an earlier matcher (so a
+/// Each member picks the first available device it matches, skipping any path
+/// in `exclude_paths` and any device already chosen by an earlier member (so a
 /// group of two same-type controllers resolves to two distinct devices).
-pub fn resolve_group_paths(
-    matchers: &[DeviceMatch],
+pub fn resolve_group_members(
+    members: &[GroupMember],
     devices: &[DeviceInfo],
     exclude_paths: &[String],
-) -> Vec<String> {
-    let mut chosen: Vec<String> = Vec::new();
-    for matcher in matchers {
+) -> Vec<ResolvedGroupSource> {
+    let mut chosen: Vec<ResolvedGroupSource> = Vec::new();
+    for member in members {
         if let Some(device) = devices.iter().find(|device| {
-            matcher.matches(device)
+            member.device_match.matches(device)
                 && !exclude_paths.contains(&device.path)
-                && !chosen.contains(&device.path)
+                && !chosen.iter().any(|source| source.path == device.path)
         }) {
-            chosen.push(device.path.clone());
+            chosen.push(ResolvedGroupSource {
+                path: device.path.clone(),
+                remap: member.remap.clone(),
+            });
         }
     }
     chosen
@@ -1127,7 +1176,7 @@ pub fn parse_profile_bytes(bytes: &[u8], source_path: &Path) -> Result<Profile> 
         name,
         description: raw.description.unwrap_or_default(),
         device_match: raw.r#match,
-        groups: raw.group,
+        groups: parse_group_members(raw.group)?,
         outputs,
         process_match: ProcessMatch {
             patterns: raw
@@ -2921,7 +2970,7 @@ mappings: []
 
     #[test]
     fn resolves_grouped_device_paths() {
-        use super::{resolve_group_paths, DeviceMatch};
+        use super::{resolve_group_members, GroupMember};
         use crate::devices::DeviceInfo;
 
         fn device(path: &str, name: &str, vendor: u16) -> DeviceInfo {
@@ -2954,29 +3003,38 @@ match:
 group:
   - name: "Wireless Controller"
   - name: "Keyboard"
+    remap:
+      key:space: btn:south
 mappings: []
 "#,
             Path::new("grouped.yaml"),
         )
         .unwrap();
         assert_eq!(profile.groups.len(), 2);
+        // The keyboard member carries a sub-config input remap.
+        assert_eq!(profile.groups[1].remap.len(), 1);
 
         // The primary controller (event1) is excluded; the group resolves the
-        // second controller and the keyboard, each distinct.
-        let paths = resolve_group_paths(
+        // second controller and the keyboard, each distinct, with its remap.
+        let resolved = resolve_group_members(
             &profile.groups,
             &devices,
             &["/dev/input/event1".to_string()],
         );
+        let paths: Vec<&str> = resolved.iter().map(|s| s.path.as_str()).collect();
         assert_eq!(paths, vec!["/dev/input/event2", "/dev/input/event3"]);
+        assert_eq!(resolved[1].remap.len(), 1);
 
-        // With no available second controller, an unmatched matcher is skipped.
+        // With no available second controller, an unmatched member is skipped.
         let only_keyboard = vec![device("/dev/input/event3", "Keyboard", 0x1234)];
-        let matchers = vec![DeviceMatch {
-            name: Some("Wireless Controller".to_string()),
-            ..Default::default()
+        let members = vec![GroupMember {
+            device_match: super::DeviceMatch {
+                name: Some("Wireless Controller".to_string()),
+                ..Default::default()
+            },
+            remap: Vec::new(),
         }];
-        assert!(resolve_group_paths(&matchers, &only_keyboard, &[]).is_empty());
+        assert!(resolve_group_members(&members, &only_keyboard, &[]).is_empty());
     }
 
     #[test]

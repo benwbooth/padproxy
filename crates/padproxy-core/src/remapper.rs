@@ -2,7 +2,7 @@ use crate::event_code::{event_from_input, virtual_output_supports, EventCode, Ev
 use crate::linux::list_devices;
 use crate::outputs::{output_device, supported_output_ids};
 use crate::profiles::{
-    resolve_group_paths, ActivatorKind, ActivatorSettings, AnalogTuning, CommandAction,
+    resolve_group_members, ActivatorKind, ActivatorSettings, AnalogTuning, CommandAction,
     CommandSettings, DigitalStickMapping, LayerActivation, LayerActivationMode, MacroEvent,
     MacroEventKind, MacroMode, MacroSettings, Mapping, MappingAction, Profile,
     StickTransformMapping, MACRO_TAP_RELEASE_MS,
@@ -47,6 +47,8 @@ pub struct RemapReport {
 pub struct RemapRuntime {
     profile: Profile,
     sources: Vec<Device>,
+    /// Per-source input remap (sub-config), aligned with `sources`.
+    source_remaps: Vec<HashMap<EventCode, EventCode>>,
     virtual_pad: VirtualDevice,
     /// Additional virtual pads that mirror the primary pad's output.
     extra_pads: Vec<VirtualDevice>,
@@ -244,25 +246,30 @@ impl RemapRuntime {
             &options.source_device_path,
             options.profile.grab_source,
         )?];
+        // Per-source input remap (sub-config); the primary source has none.
+        let mut source_remaps: Vec<HashMap<EventCode, EventCode>> = vec![HashMap::new()];
 
         // Open any grouped source devices and merge them into the same virtual
-        // controller.
+        // controller, each with its optional sub-config remap.
         if !options.profile.groups.is_empty() {
             let available = list_devices().unwrap_or_default();
-            let extra_paths = resolve_group_paths(
+            let grouped = resolve_group_members(
                 &options.profile.groups,
                 &available,
                 &[options.source_device_path.clone()],
             );
-            for path in extra_paths {
-                match open_source(&path, options.profile.grab_source) {
+            for source in grouped {
+                match open_source(&source.path, options.profile.grab_source) {
                     Ok(device) => {
-                        log_info!("remap", "grouped source device {path}");
+                        log_info!("remap", "grouped source device {}", source.path);
                         sources.push(device);
+                        source_remaps.push(source.remap.into_iter().collect());
                     }
-                    Err(error) => {
-                        log_warn!("remap", "failed to open grouped device {path}: {error}")
-                    }
+                    Err(error) => log_warn!(
+                        "remap",
+                        "failed to open grouped device {}: {error}",
+                        source.path
+                    ),
                 }
             }
         }
@@ -338,6 +345,7 @@ impl RemapRuntime {
         Ok(Self {
             profile: options.profile,
             sources,
+            source_remaps,
             virtual_pad,
             extra_pads,
             layers,
@@ -385,14 +393,28 @@ impl RemapRuntime {
 
         let mut had_events = false;
         let mut events = Vec::new();
-        for source in &mut self.sources {
-            match source.fetch_events() {
+        for index in 0..self.sources.len() {
+            let raw: Vec<InputEvent> = match self.sources[index].fetch_events() {
                 Ok(iter) => {
                     had_events = true;
-                    events.extend(iter);
+                    iter.collect()
                 }
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => continue,
                 Err(error) => return Err(error).context("failed reading source events"),
+            };
+
+            let remap = &self.source_remaps[index];
+            if remap.is_empty() {
+                events.extend(raw);
+            } else {
+                // Apply this device's sub-config input remap before the shared
+                // profile mapping sees the events.
+                for event in raw {
+                    match event_from_input(event).and_then(|code| remap.get(&code)) {
+                        Some(target) => events.push(remapped_input_event(*target, event.value())),
+                        None => events.push(event),
+                    }
+                }
             }
         }
 
@@ -1475,6 +1497,15 @@ fn digital_axis_direction(unit_value: f64, threshold: f64) -> i32 {
     } else {
         0
     }
+}
+
+fn remapped_input_event(target: EventCode, value: i32) -> InputEvent {
+    let event_type = match target.kind {
+        EventKind::Key => EventType::KEY,
+        EventKind::Relative => EventType::RELATIVE,
+        EventKind::Absolute => EventType::ABSOLUTE,
+    };
+    InputEvent::new(event_type.0, target.code, value)
 }
 
 fn pad_node_paths(pad: &mut VirtualDevice) -> Vec<String> {

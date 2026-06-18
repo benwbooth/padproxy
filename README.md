@@ -315,6 +315,9 @@ match:
 group:
   - name: "Wireless Controller"   # a second controller of the same type
   - name: "Keyboard"
+    remap:                        # per-device sub-config: rewrite this
+      key:w: btn:north            # device's inputs before the shared profile
+      key:space: btn:south
 ```
 
 Example:
