@@ -39,6 +39,18 @@ impl EventCode {
             (EventKind::Key, code) if code == KeyCode::BTN_MODE.0 => "btn:mode".to_string(),
             (EventKind::Key, code) if code == KeyCode::BTN_THUMBL.0 => "btn:thumbl".to_string(),
             (EventKind::Key, code) if code == KeyCode::BTN_THUMBR.0 => "btn:thumbr".to_string(),
+            (EventKind::Key, code) if code == KeyCode::BTN_TRIGGER_HAPPY1.0 => {
+                "btn:paddle1".to_string()
+            }
+            (EventKind::Key, code) if code == KeyCode::BTN_TRIGGER_HAPPY2.0 => {
+                "btn:paddle2".to_string()
+            }
+            (EventKind::Key, code) if code == KeyCode::BTN_TRIGGER_HAPPY3.0 => {
+                "btn:paddle3".to_string()
+            }
+            (EventKind::Key, code) if code == KeyCode::BTN_TRIGGER_HAPPY4.0 => {
+                "btn:paddle4".to_string()
+            }
             (EventKind::Key, code) if code == KeyCode::BTN_LEFT.0 => "mouse:left".to_string(),
             (EventKind::Key, code) if code == KeyCode::BTN_RIGHT.0 => "mouse:right".to_string(),
             (EventKind::Key, code) if code == KeyCode::BTN_MIDDLE.0 => "mouse:middle".to_string(),
@@ -98,6 +110,10 @@ pub fn parse_event_code(value: &str) -> Option<EventCode> {
         "btn:mode" => key(KeyCode::BTN_MODE),
         "btn:thumbl" | "btn:l3" => key(KeyCode::BTN_THUMBL),
         "btn:thumbr" | "btn:r3" => key(KeyCode::BTN_THUMBR),
+        "btn:paddle1" | "btn:trigger_happy1" | "btn:p1" => key(KeyCode::BTN_TRIGGER_HAPPY1),
+        "btn:paddle2" | "btn:trigger_happy2" | "btn:p2" => key(KeyCode::BTN_TRIGGER_HAPPY2),
+        "btn:paddle3" | "btn:trigger_happy3" | "btn:p3" => key(KeyCode::BTN_TRIGGER_HAPPY3),
+        "btn:paddle4" | "btn:trigger_happy4" | "btn:p4" => key(KeyCode::BTN_TRIGGER_HAPPY4),
         "mouse:left" | "mouse:primary" | "btn:left" => key(KeyCode::BTN_LEFT),
         "mouse:right" | "mouse:secondary" | "btn:right" => key(KeyCode::BTN_RIGHT),
         "mouse:middle" | "mouse:wheel_button" | "btn:middle" => key(KeyCode::BTN_MIDDLE),
@@ -367,6 +383,22 @@ mod tests {
         parse_event_code, virtual_keyboard_mouse_supports, virtual_output_supports,
         virtual_xbox_supports, EventKind,
     };
+
+    #[test]
+    fn parses_paddle_buttons_round_trip() {
+        // Paddles are source inputs (mapped to actions), so they round-trip by
+        // name but are not standard virtual-pad outputs.
+        for (name, canonical) in [
+            ("btn:paddle1", "btn:paddle1"),
+            ("btn:trigger_happy2", "btn:paddle2"),
+            ("btn:p3", "btn:paddle3"),
+            ("btn:paddle4", "btn:paddle4"),
+        ] {
+            let code = parse_event_code(name).unwrap();
+            assert_eq!(code.kind, EventKind::Key);
+            assert_eq!(code.name(), canonical);
+        }
+    }
 
     #[test]
     fn parses_keyboard_mouse_and_relative_events() {

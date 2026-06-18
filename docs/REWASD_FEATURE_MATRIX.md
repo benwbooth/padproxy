@@ -167,7 +167,9 @@ be remapped; device-specific extras (Elite paddles, gyro, touchpad, individual
 Joy-Cons) are tracked separately under Sensors/Grouping.
 
 - Xbox 360 / One / Series. Recognized and remappable.
-- Xbox Elite paddles. Pad recognized; paddle-specific buttons remain.
+- Xbox Elite paddles. Done: paddle buttons (`btn:paddle1`-`btn:paddle4`, the
+  evdev `BTN_TRIGGER_HAPPY` codes) are recognized as source inputs and can be
+  mapped like any other button.
 - DualShock 3 / 4. Recognized and remappable.
 - DualSense / DualSense Edge. Recognized and remappable.
 - PlayStation Navigation controller. Recognized by name.
