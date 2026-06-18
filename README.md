@@ -299,6 +299,10 @@ glyphs, while keyboard/mouse capabilities are added when the profile targets
 them. Select the output per profile with the `output:` key (or in the GUI), and
 list every available output with `padproxyctl list-outputs`.
 
+A profile can emit to several virtual controllers at once with an `outputs:`
+list (each entry is an output type like `ds4` or `switchpro`); every extra pad
+mirrors the primary pad's output.
+
 A profile can also group several physical devices into one virtual controller.
 Add a `group:` list of device matchers (same fields as `match:`); each matcher
 opens an additional source device whose input is merged into the same virtual

@@ -154,7 +154,8 @@ Source pages consulted:
   uinput virtual device when profile mappings or macros target them.
 - Mouse output. Basic mouse-button and relative-axis capabilities are added to
   the Linux uinput virtual device when profile mappings or macros target them.
-- Multiple virtual devices from one profile.
+- Multiple virtual devices from one profile. Done: a profile `outputs:` list
+  creates additional virtual gamepads that mirror the primary pad's output.
 - External controller emulation over Bluetooth.
 - GIMX-style wired external output.
 

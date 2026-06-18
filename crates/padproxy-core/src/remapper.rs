@@ -48,6 +48,8 @@ pub struct RemapRuntime {
     profile: Profile,
     sources: Vec<Device>,
     virtual_pad: VirtualDevice,
+    /// Additional virtual pads that mirror the primary pad's output.
+    extra_pads: Vec<VirtualDevice>,
     layers: Vec<RuntimeLayer>,
     held_layers: HashSet<usize>,
     toggled_layers: HashSet<usize>,
@@ -273,16 +275,22 @@ impl RemapRuntime {
 
         let mut virtual_pad = create_virtual_pad(&options.profile, ff_source_index.is_some())
             .context("failed to create virtual pad")?;
-        let virtual_nodes = virtual_pad
-            .enumerate_dev_nodes_blocking()
-            .ok()
-            .map(|nodes| {
-                nodes
-                    .filter_map(Result::ok)
-                    .map(|path| path.display().to_string())
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+        let mut virtual_nodes = pad_node_paths(&mut virtual_pad);
+
+        // Additional virtual output devices that mirror the primary pad's output.
+        let mut extra_pads = Vec::new();
+        for output_type in &options.profile.outputs {
+            let mut pad = build_virtual_gamepad(
+                output_type,
+                &AttributeSet::<KeyCode>::new(),
+                &AttributeSet::<RelativeAxisCode>::new(),
+                false,
+            )
+            .with_context(|| format!("failed to create extra virtual output {output_type}"))?;
+            virtual_nodes.extend(pad_node_paths(&mut pad));
+            log_info!("remap", "extra virtual output {output_type}");
+            extra_pads.push(pad);
+        }
 
         log_info!(
             "remap",
@@ -331,6 +339,7 @@ impl RemapRuntime {
             profile: options.profile,
             sources,
             virtual_pad,
+            extra_pads,
             layers,
             held_layers: HashSet::new(),
             toggled_layers: HashSet::new(),
@@ -412,6 +421,10 @@ impl RemapRuntime {
 
         if !output.is_empty() {
             self.virtual_pad.emit(&output)?;
+            for pad in &mut self.extra_pads {
+                // Unsupported codes (e.g. keyboard keys) are dropped by uinput.
+                pad.emit(&output)?;
+            }
         } else if !had_events {
             thread::sleep(Duration::from_millis(5));
         }
@@ -1462,6 +1475,18 @@ fn digital_axis_direction(unit_value: f64, threshold: f64) -> i32 {
     } else {
         0
     }
+}
+
+fn pad_node_paths(pad: &mut VirtualDevice) -> Vec<String> {
+    pad.enumerate_dev_nodes_blocking()
+        .ok()
+        .map(|nodes| {
+            nodes
+                .filter_map(Result::ok)
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
 }
 
 fn open_source(path: &str, grab: bool) -> Result<Device> {

@@ -312,6 +312,8 @@ pub struct Profile {
     pub groups: Vec<DeviceMatch>,
     pub process_match: ProcessMatch,
     pub output_type: String,
+    /// Additional virtual output devices emitted alongside the primary one.
+    pub outputs: Vec<String>,
     pub passthrough: bool,
     pub grab_source: bool,
     pub source_path: PathBuf,
@@ -331,6 +333,8 @@ struct RawProfile {
     group: Vec<DeviceMatch>,
     process: Option<RawStringOrList>,
     output: Option<RawOutput>,
+    #[serde(default)]
+    outputs: Vec<String>,
     passthrough: Option<bool>,
     grab_source: Option<bool>,
     mappings: Option<Vec<RawMapping>>,
@@ -1050,6 +1054,11 @@ pub fn parse_profile_bytes(bytes: &[u8], source_path: &Path) -> Result<Profile> 
         None => "xbox360".to_string(),
     };
     let output_type = normalize_output_type(&output_type);
+    let outputs = raw
+        .outputs
+        .iter()
+        .map(|value| normalize_output_type(value))
+        .collect::<Vec<_>>();
 
     let mut layers = Vec::new();
     layers.push(Layer {
@@ -1119,6 +1128,7 @@ pub fn parse_profile_bytes(bytes: &[u8], source_path: &Path) -> Result<Profile> 
         description: raw.description.unwrap_or_default(),
         device_match: raw.r#match,
         groups: raw.group,
+        outputs,
         process_match: ProcessMatch {
             patterns: raw
                 .process
@@ -2888,6 +2898,25 @@ mappings:
             assert_eq!(command.action, CommandAction::RemapOff);
             assert!(command.command_line.is_empty());
         }
+    }
+
+    #[test]
+    fn parses_additional_virtual_outputs() {
+        let profile = parse_profile_bytes(
+            br#"
+id: dual-out
+output:
+  type: xbox360
+outputs:
+  - DualShock 4
+  - switchpro
+mappings: []
+"#,
+            Path::new("dual-out.yaml"),
+        )
+        .unwrap();
+        assert_eq!(profile.output_type, "xbox360");
+        assert_eq!(profile.outputs, vec!["ds4", "switchpro"]);
     }
 
     #[test]
