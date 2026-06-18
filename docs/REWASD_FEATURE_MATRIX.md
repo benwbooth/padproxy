@@ -158,8 +158,11 @@ Source pages consulted:
   the Linux uinput virtual device when profile mappings or macros target them.
 - Multiple virtual devices from one profile. Done: a profile `outputs:` list
   creates additional virtual gamepads that mirror the primary pad's output.
-- External controller emulation over Bluetooth.
-- GIMX-style wired external output.
+- External controller emulation over Bluetooth. Not implemented: presenting as
+  a Bluetooth gamepad to another console needs a BlueZ HID-gadget/configfs stack,
+  which is separate hardware/kernel infrastructure.
+- GIMX-style wired external output. Not implemented: needs a GIMX USB adapter
+  and its serial protocol.
 
 ## Device Support
 
@@ -247,7 +250,9 @@ Joy-Cons) are tracked separately under Sensors/Grouping.
 - Crosshair overlay. Basic crosshair done: `padproxy --overlay crosshair`
   shows a transparent, always-on-top, click-through full-screen window that
   draws a center crosshair.
-- Screen magnifier.
+- Screen magnifier. Not implemented: a live magnifier needs a PipeWire
+  screencast/portal backend to read the screen, which is outside the current
+  evdev/uinput scope.
 
 ## Automation and Integration
 
