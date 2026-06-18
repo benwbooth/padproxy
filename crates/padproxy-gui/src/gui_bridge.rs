@@ -21,6 +21,10 @@ pub mod qobject {
         #[qproperty(QString, discover_preview)]
         #[qproperty(QString, discover_status)]
         #[qproperty(bool, discover_active)]
+        #[qproperty(QString, capture3d_preview)]
+        #[qproperty(QString, capture3d_status)]
+        #[qproperty(bool, capture3d_active)]
+        #[qproperty(QString, capture3d_dir)]
         type PadProxyController = super::PadProxyControllerRust;
 
         #[qinvokable]
@@ -64,6 +68,26 @@ pub mod qobject {
 
         #[qinvokable]
         fn stop_discover(self: Pin<&mut Self>) -> QString;
+
+        #[qinvokable]
+        fn start_capture3d(
+            self: Pin<&mut Self>,
+            camera_path: QString,
+            output_dir: QString,
+            frames: i32,
+        );
+
+        #[qinvokable]
+        fn poll_capture3d(self: Pin<&mut Self>);
+
+        #[qinvokable]
+        fn stop_capture3d(self: Pin<&mut Self>);
+
+        #[qinvokable]
+        fn launch_splat(self: Pin<&mut Self>) -> QString;
+
+        #[qinvokable]
+        fn default_capture_dir(self: Pin<&mut Self>) -> QString;
     }
 }
 
@@ -95,10 +119,15 @@ pub struct PadProxyControllerRust {
     discover_preview: QString,
     discover_status: QString,
     discover_active: bool,
+    capture3d_preview: QString,
+    capture3d_status: QString,
+    capture3d_active: bool,
+    capture3d_dir: QString,
     capture_device_path: String,
     capture_reader: Option<CaptureReader>,
     remap_session: Option<RemapSession>,
     discover_session: Option<crate::discover::DiscoverSession>,
+    capture3d_session: Option<crate::capture3d::OrbitCaptureSession>,
 }
 
 impl qobject::PadProxyController {
@@ -425,6 +454,102 @@ mappings:\n\
         this.as_mut()
             .set_discover_status(QString::from("Discovery stopped."));
         QString::from(&json)
+    }
+
+    /// Default directory for a 3D capture (`~/.local/share/padproxy/capture`).
+    pub fn default_capture_dir(self: Pin<&mut Self>) -> QString {
+        let base = std::env::var("XDG_DATA_HOME")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| {
+                let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+                std::path::Path::new(&home).join(".local").join("share")
+            });
+        let dir = base.join("padproxy").join("capture");
+        QString::from(&dir.display().to_string())
+    }
+
+    /// Start an orbit capture for 3D / gaussian-splat reconstruction.
+    pub fn start_capture3d(
+        self: Pin<&mut Self>,
+        camera_path: QString,
+        output_dir: QString,
+        frames: i32,
+    ) {
+        let mut this = self;
+        let dir = output_dir.to_string();
+        let session = crate::capture3d::OrbitCaptureSession::start(
+            camera_path.to_string(),
+            dir.clone(),
+            frames.max(1) as u32,
+        );
+        {
+            let mut rust = this.as_mut().rust_mut();
+            rust.capture3d_session = Some(session);
+        }
+        this.as_mut().set_capture3d_dir(QString::from(&dir));
+        this.as_mut().set_capture3d_active(true);
+        this.as_mut()
+            .set_capture3d_status(QString::from("Starting camera…"));
+    }
+
+    /// Poll the 3D capture; updates preview/status/active.
+    pub fn poll_capture3d(self: Pin<&mut Self>) {
+        use crate::capture3d::CaptureMessage;
+        let mut this = self;
+
+        let messages = {
+            let rust = this.as_mut().rust_mut();
+            match rust.capture3d_session.as_ref() {
+                Some(session) => session.poll(),
+                None => Vec::new(),
+            }
+        };
+
+        for message in messages {
+            match message {
+                CaptureMessage::Progress { saved, target } => {
+                    this.as_mut().set_capture3d_status(QString::from(&format!(
+                        "Captured {saved} / {target} frames — keep rotating…"
+                    )));
+                }
+                CaptureMessage::Preview(uri) => {
+                    this.as_mut().set_capture3d_preview(QString::from(&uri));
+                }
+                CaptureMessage::Status(text) => {
+                    this.as_mut().set_capture3d_status(QString::from(&text));
+                }
+                CaptureMessage::Done(_dir) => {
+                    this.as_mut().set_capture3d_active(false);
+                }
+                CaptureMessage::Failed(error) => {
+                    this.as_mut()
+                        .set_capture3d_status(QString::from(&format!("Capture failed: {error}")));
+                    this.as_mut().set_capture3d_active(false);
+                }
+            }
+        }
+    }
+
+    /// Stop the 3D capture.
+    pub fn stop_capture3d(self: Pin<&mut Self>) {
+        let mut this = self;
+        {
+            let mut rust = this.as_mut().rust_mut();
+            if let Some(mut session) = rust.capture3d_session.take() {
+                session.stop();
+            }
+        }
+        this.as_mut().set_capture3d_active(false);
+    }
+
+    /// Launch the splat pipeline (COLMAP + brush) on the last capture, or return
+    /// guidance if the tools aren't installed.
+    pub fn launch_splat(self: Pin<&mut Self>) -> QString {
+        let dir = self.capture3d_dir().to_string();
+        if dir.is_empty() {
+            return QString::from("Capture frames first.");
+        }
+        QString::from(&crate::capture3d::launch_pipeline(&dir))
     }
 }
 

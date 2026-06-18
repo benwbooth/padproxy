@@ -2108,6 +2108,118 @@ ApplicationWindow {
         }
     }
 
+    // ---- 3D scan / gaussian-splat capture flow --------------------------
+    Dialog {
+        id: capture3dDialog
+        title: "Scan controller in 3D"
+        modal: true
+        anchors.centerIn: Overlay.overlay
+        width: Math.min(640, root.width - 80)
+        standardButtons: Dialog.Close
+        Material.background: root.colSurface
+
+        property string cameraPath: "/dev/video0"
+        property int frames: 120
+
+        onClosed: if (backend.capture3d_active) backend.stop_capture3d()
+
+        Timer {
+            interval: 150
+            repeat: true
+            running: backend.capture3d_active
+            onTriggered: backend.poll_capture3d()
+        }
+
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 10
+
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: root.colText
+                text: "Hold the controller in front of the webcam and slowly rotate it so every side is "
+                    + "seen. PadProxy records the frames. Building the actual gaussian splat then runs "
+                    + "COLMAP + brush on your machine — a GPU is required."
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                Label { text: "Camera"; color: root.colTextDim }
+                TextField {
+                    text: capture3dDialog.cameraPath
+                    Layout.preferredWidth: 130
+                    enabled: !backend.capture3d_active
+                    onTextChanged: capture3dDialog.cameraPath = text
+                }
+                Label { text: "Frames"; color: root.colTextDim }
+                SpinBox {
+                    from: 30
+                    to: 400
+                    stepSize: 10
+                    value: capture3dDialog.frames
+                    enabled: !backend.capture3d_active
+                    onValueModified: capture3dDialog.frames = value
+                }
+                Button {
+                    text: backend.capture3d_active ? "Restart" : "Start"
+                    onClicked: backend.start_capture3d(
+                        capture3dDialog.cameraPath,
+                        backend.default_capture_dir(),
+                        capture3dDialog.frames)
+                }
+                Item { Layout.fillWidth: true }
+                BusyIndicator {
+                    running: backend.capture3d_active
+                    visible: backend.capture3d_active
+                    implicitWidth: 28
+                    implicitHeight: 28
+                }
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 300
+                color: "#0c0e12"
+                border.color: root.colBorder
+                radius: 6
+                clip: true
+
+                Image {
+                    anchors.fill: parent
+                    anchors.margins: 6
+                    fillMode: Image.PreserveAspectFit
+                    cache: false
+                    smooth: true
+                    source: backend.capture3d_preview
+                    visible: backend.capture3d_preview.length > 0
+                }
+                Label {
+                    anchors.centerIn: parent
+                    visible: backend.capture3d_preview.length === 0
+                    color: root.colTextDim
+                    text: backend.capture3d_active ? "Waiting for camera…" : "Click Start to record"
+                }
+            }
+
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: root.colAccent
+                text: backend.capture3d_status
+                visible: backend.capture3d_status.length > 0
+            }
+
+            Button {
+                text: "Build splat (COLMAP + brush)"
+                Layout.alignment: Qt.AlignRight
+                enabled: !backend.capture3d_active && backend.capture3d_dir.length > 0
+                onClicked: backend.capture3d_status = backend.launch_splat()
+            }
+        }
+    }
+
     // ---- Name-this-profile dialog (shown on Save when unnamed) ----------
     Dialog {
         id: nameDialog
@@ -3262,6 +3374,14 @@ ApplicationWindow {
                                             onClicked: layoutFileDialog.open()
                                             ToolTip.visible: hovered
                                             ToolTip.text: "Load a layout previously saved as a JSON file."
+                                        }
+
+                                        Button {
+                                            text: "Scan in 3D…"
+                                            onClicked: capture3dDialog.open()
+                                            ToolTip.visible: hovered
+                                            ToolTip.text: "Record your controller from the webcam to build a 3D "
+                                                + "gaussian-splat model (training needs COLMAP + brush + a GPU)."
                                         }
 
                                         Item {
