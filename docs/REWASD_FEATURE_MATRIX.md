@@ -40,7 +40,9 @@ Source pages consulted:
   `padproxyctl export-profile` writes a profile's YAML preset and
   `padproxyctl import-profile` validates and installs a preset into the user
   profile directory. The online community browser remains.
-- Background tray/daemon.
+- Background tray/daemon. Basic background daemon done: `padproxyctl serve`
+  runs a long-lived control service over a local socket; a system-tray icon
+  remains.
 
 ## Mapping Types
 
@@ -56,7 +58,9 @@ Source pages consulted:
   mappings and relative mouse-motion to centered virtual-stick mappings done.
 - Native/hardware mappings that do not create an emulated device.
 - Virtual mappings that emit through a virtual device.
-- Mute physical input while virtual output is active.
+- Mute physical input while virtual output is active. Done: `grab_source`
+  grabs the physical device with `EVIOCGRAB` so its input is muted from other
+  apps while the virtual controller drives output.
 - Disable a source button entirely. Done for controller inputs.
 - Commands, such as turn remap off. Basic PadProxy command mappings done for
   stopping queued and held macros, running external commands, and a `remap_off`
