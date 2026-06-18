@@ -142,6 +142,14 @@ ApplicationWindow {
         "abs:hat0x",
         "abs:hat0y"
     ]
+    property var centeredAnalogAxisCodes: [
+        "abs:x",
+        "abs:y",
+        "abs:rx",
+        "abs:ry",
+        "abs:hat0x",
+        "abs:hat0y"
+    ]
     property var relativeEventCodes: [
         "rel:x",
         "rel:y",
@@ -453,6 +461,40 @@ ApplicationWindow {
         return root.analogAxisCodes.indexOf(code) >= 0
     }
 
+    function isCenteredAnalogAxisCode(code) {
+        return root.centeredAnalogAxisCodes.indexOf(code) >= 0
+    }
+
+    function centeredAnalogAxisCode(code, fallback) {
+        return root.isCenteredAnalogAxisCode(code) ? code : fallback
+    }
+
+    function alternateCenteredAnalogAxis(code) {
+        for (let i = 0; i < root.centeredAnalogAxisCodes.length; i++) {
+            if (root.centeredAnalogAxisCodes[i] !== code)
+                return root.centeredAnalogAxisCodes[i]
+        }
+        return "abs:y"
+    }
+
+    function setDigitalStickAxis(rowIndex, field, code) {
+        const fallback = field === "xAxisCode" ? "abs:x" : "abs:y"
+        const nextCode = root.centeredAnalogAxisCode(code, fallback)
+        const otherField = field === "xAxisCode" ? "yAxisCode" : "xAxisCode"
+        const otherFallback = otherField === "xAxisCode" ? "abs:x" : "abs:y"
+        const row = digitalSticksModel.get(rowIndex)
+        let otherCode = root.centeredAnalogAxisCode(row[otherField], otherFallback)
+
+        digitalSticksModel.setProperty(rowIndex, field, nextCode)
+        root.ensureAnalogAxis(nextCode)
+
+        if (otherCode === nextCode) {
+            otherCode = root.alternateCenteredAnalogAxis(nextCode)
+            digitalSticksModel.setProperty(rowIndex, otherField, otherCode)
+            root.ensureAnalogAxis(otherCode)
+        }
+    }
+
     function isRelativeCode(code) {
         return root.relativeEventCodes.indexOf(code) >= 0
     }
@@ -578,9 +620,20 @@ ApplicationWindow {
         })
     }
 
+    function addDigitalStick() {
+        digitalSticksModel.append({
+            xAxisCode: "abs:x",
+            yAxisCode: "abs:y",
+            thresholdPercent: 50
+        })
+        root.ensureAnalogAxis("abs:x")
+        root.ensureAnalogAxis("abs:y")
+    }
+
     function loadAnalogSettings(analog) {
         analogModel.clear()
         analogZonesModel.clear()
+        digitalSticksModel.clear()
         const axes = analog && analog.axes ? analog.axes : []
         for (let i = 0; i < axes.length; i++) {
             const axisCode = axes[i].code_name || axes[i].code || "abs:x"
@@ -609,44 +662,71 @@ ApplicationWindow {
                 })
             }
         }
+        const digitalSticks = analog && analog.digital_sticks ? analog.digital_sticks : []
+        for (let i = 0; i < digitalSticks.length; i++) {
+            const xAxisCode = root.centeredAnalogAxisCode(digitalSticks[i].x_axis_name || digitalSticks[i].x_axis, "abs:x")
+            let yAxisCode = root.centeredAnalogAxisCode(digitalSticks[i].y_axis_name || digitalSticks[i].y_axis, "abs:y")
+            if (xAxisCode === yAxisCode)
+                yAxisCode = root.alternateCenteredAnalogAxis(xAxisCode)
+            digitalSticksModel.append({
+                xAxisCode: xAxisCode,
+                yAxisCode: yAxisCode,
+                thresholdPercent: root.normalizedPercent((digitalSticks[i].threshold || 0.5) * 100, 50, 1, 100)
+            })
+        }
     }
 
     function analogYaml() {
-        if (analogModel.count === 0)
+        if (analogModel.count === 0 && digitalSticksModel.count === 0)
             return ""
 
         let text = "analog:\n"
-        text += "  axes:\n"
-        for (let i = 0; i < analogModel.count; i++) {
-            const row = analogModel.get(i)
-            const code = row.code || "abs:x"
-            text += "    - code: " + code + "\n"
-            text += "      deadzone: " + (root.normalizedPercent(row.deadzonePercent, 0, 0, 99) / 100).toFixed(2) + "\n"
-            text += "      sensitivity: " + (root.normalizedPercent(row.sensitivityPercent, 100, 1, 400) / 100).toFixed(2) + "\n"
-            const curveKind = row.curveKind || "linear"
-            if (curveKind !== "linear") {
-                text += "      curve: " + curveKind + "\n"
-                if (curveKind === "custom")
-                    text += "      curve_exponent: " + (root.normalizedCurveExponentPercent(row.curveExponentPercent) / 100).toFixed(2) + "\n"
+        if (analogModel.count > 0) {
+            text += "  axes:\n"
+            for (let i = 0; i < analogModel.count; i++) {
+                const row = analogModel.get(i)
+                const code = row.code || "abs:x"
+                text += "    - code: " + code + "\n"
+                text += "      deadzone: " + (root.normalizedPercent(row.deadzonePercent, 0, 0, 99) / 100).toFixed(2) + "\n"
+                text += "      sensitivity: " + (root.normalizedPercent(row.sensitivityPercent, 100, 1, 400) / 100).toFixed(2) + "\n"
+                const curveKind = row.curveKind || "linear"
+                if (curveKind !== "linear") {
+                    text += "      curve: " + curveKind + "\n"
+                    if (curveKind === "custom")
+                        text += "      curve_exponent: " + (root.normalizedCurveExponentPercent(row.curveExponentPercent) / 100).toFixed(2) + "\n"
+                }
+                text += "      invert: " + (row.invert === true ? "true" : "false") + "\n"
+                text += "      output_min: " + (row.outputMin !== undefined ? row.outputMin : root.analogRangeMin(code)) + "\n"
+                text += "      output_max: " + (row.outputMax !== undefined ? row.outputMax : root.analogRangeMax(code)) + "\n"
+                let zoneText = ""
+                for (let zoneIndex = 0; zoneIndex < analogZonesModel.count; zoneIndex++) {
+                    const zone = analogZonesModel.get(zoneIndex)
+                    if (zone.axisCode !== code)
+                        continue
+                    const minPercent = Math.min(99, root.normalizedZonePercent(zone.zoneMinPercent, 66))
+                    const maxPercent = Math.max(minPercent + 1, root.normalizedZonePercent(zone.zoneMaxPercent, 100))
+                    zoneText += "        - name: " + (zone.zoneName || "custom") + "\n"
+                    zoneText += "          min: " + (minPercent / 100).toFixed(2) + "\n"
+                    zoneText += "          max: " + (maxPercent / 100).toFixed(2) + "\n"
+                    zoneText += "          to: " + (zone.targetCode || "btn:south") + "\n"
+                }
+                if (zoneText.length > 0) {
+                    text += "      zones:\n"
+                    text += zoneText
+                }
             }
-            text += "      invert: " + (row.invert === true ? "true" : "false") + "\n"
-            text += "      output_min: " + (row.outputMin !== undefined ? row.outputMin : root.analogRangeMin(code)) + "\n"
-            text += "      output_max: " + (row.outputMax !== undefined ? row.outputMax : root.analogRangeMax(code)) + "\n"
-            let zoneText = ""
-            for (let zoneIndex = 0; zoneIndex < analogZonesModel.count; zoneIndex++) {
-                const zone = analogZonesModel.get(zoneIndex)
-                if (zone.axisCode !== code)
-                    continue
-                const minPercent = Math.min(99, root.normalizedZonePercent(zone.zoneMinPercent, 66))
-                const maxPercent = Math.max(minPercent + 1, root.normalizedZonePercent(zone.zoneMaxPercent, 100))
-                zoneText += "        - name: " + (zone.zoneName || "custom") + "\n"
-                zoneText += "          min: " + (minPercent / 100).toFixed(2) + "\n"
-                zoneText += "          max: " + (maxPercent / 100).toFixed(2) + "\n"
-                zoneText += "          to: " + (zone.targetCode || "btn:south") + "\n"
-            }
-            if (zoneText.length > 0) {
-                text += "      zones:\n"
-                text += zoneText
+        }
+        if (digitalSticksModel.count > 0) {
+            text += "  digital_sticks:\n"
+            for (let i = 0; i < digitalSticksModel.count; i++) {
+                const row = digitalSticksModel.get(i)
+                const xAxisCode = root.centeredAnalogAxisCode(row.xAxisCode, "abs:x")
+                let yAxisCode = root.centeredAnalogAxisCode(row.yAxisCode, "abs:y")
+                if (xAxisCode === yAxisCode)
+                    yAxisCode = root.alternateCenteredAnalogAxis(xAxisCode)
+                text += "    - x_axis: " + xAxisCode + "\n"
+                text += "      y_axis: " + yAxisCode + "\n"
+                text += "      threshold: " + (root.normalizedPercent(row.thresholdPercent, 50, 1, 100) / 100).toFixed(2) + "\n"
             }
         }
         return text
@@ -1031,6 +1111,7 @@ ApplicationWindow {
         ])
         analogModel.clear()
         analogZonesModel.clear()
+        digitalSticksModel.clear()
         backend.new_profile()
     }
 
@@ -1204,6 +1285,10 @@ ApplicationWindow {
 
     ListModel {
         id: analogZonesModel
+    }
+
+    ListModel {
+        id: digitalSticksModel
     }
 
     Timer {
@@ -1860,6 +1945,105 @@ ApplicationWindow {
                                                 Button {
                                                     text: "Remove"
                                                     onClicked: analogZonesModel.remove(index)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            Frame {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: Math.max(140, digitalSticksModel.count * 54 + 58)
+
+                                ColumnLayout {
+                                    anchors.fill: parent
+                                    spacing: 8
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+
+                                        Label {
+                                            text: "Digital Sticks"
+                                            font.bold: true
+                                        }
+
+                                        Item {
+                                            Layout.fillWidth: true
+                                        }
+
+                                        Button {
+                                            text: "Add Stick"
+                                            onClicked: root.addDigitalStick()
+                                        }
+                                    }
+
+                                    ListView {
+                                        id: digitalSticksList
+                                        Layout.fillWidth: true
+                                        Layout.fillHeight: true
+                                        clip: true
+                                        model: digitalSticksModel
+
+                                        delegate: Rectangle {
+                                            width: ListView.view.width
+                                            height: 48
+                                            color: index % 2 === 0 ? "#1d232b" : "transparent"
+                                            radius: 4
+
+                                            RowLayout {
+                                                anchors.fill: parent
+                                                anchors.margins: 4
+                                                spacing: 8
+
+                                                Label {
+                                                    text: "X"
+                                                    Layout.preferredWidth: 16
+                                                    horizontalAlignment: Text.AlignRight
+                                                }
+
+                                                ComboBox {
+                                                    model: root.centeredAnalogAxisCodes
+                                                    currentIndex: Math.max(0, root.centeredAnalogAxisCodes.indexOf(xAxisCode))
+                                                    Layout.fillWidth: true
+                                                    onActivated: root.setDigitalStickAxis(index, "xAxisCode", currentText)
+                                                    ToolTip.visible: hovered
+                                                    ToolTip.text: root.eventLabel(currentText)
+                                                }
+
+                                                Label {
+                                                    text: "Y"
+                                                    Layout.preferredWidth: 16
+                                                    horizontalAlignment: Text.AlignRight
+                                                }
+
+                                                ComboBox {
+                                                    model: root.centeredAnalogAxisCodes
+                                                    currentIndex: Math.max(0, root.centeredAnalogAxisCodes.indexOf(yAxisCode))
+                                                    Layout.fillWidth: true
+                                                    onActivated: root.setDigitalStickAxis(index, "yAxisCode", currentText)
+                                                    ToolTip.visible: hovered
+                                                    ToolTip.text: root.eventLabel(currentText)
+                                                }
+
+                                                Label {
+                                                    text: "Threshold"
+                                                    Layout.preferredWidth: 72
+                                                    horizontalAlignment: Text.AlignRight
+                                                }
+
+                                                SpinBox {
+                                                    from: 1
+                                                    to: 100
+                                                    editable: true
+                                                    value: root.normalizedPercent(thresholdPercent, 50, 1, 100)
+                                                    Layout.preferredWidth: 88
+                                                    onValueModified: digitalSticksModel.setProperty(index, "thresholdPercent", value)
+                                                }
+
+                                                Button {
+                                                    text: "Remove"
+                                                    onClicked: digitalSticksModel.remove(index)
                                                 }
                                             }
                                         }

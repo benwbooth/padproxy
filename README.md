@@ -97,6 +97,8 @@ analog panel tunes virtual axes with deadzone, sensitivity, inversion, and
 output range controls, plus linear, soft, aggressive, and custom exponent
 response curves. Analog zone rows can hold a virtual button, keyboard key, or
 mouse button while an axis is inside a low, medium, high, or custom range.
+Digital stick rows convert a stick pair into the virtual D-pad with 8-way
+diagonal output.
 Macro rows can tap a virtual button/key/mouse button from the
 structured editor or hold a virtual button until the source is released; the
 raw YAML editor also supports explicit controller/keyboard/mouse button down/up
@@ -147,6 +149,10 @@ analog:
           min: 0.66
           max: 1.00
           to: key:space
+  digital_sticks:
+    - x_axis: abs:x
+      y_axis: abs:y
+      threshold: 0.50
 mappings:
   - from: btn:south
     to: btn:south

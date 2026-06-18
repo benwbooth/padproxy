@@ -129,6 +129,7 @@ pub enum MacroEventKind {
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct AnalogSettings {
     pub axes: Vec<AnalogTuning>,
+    pub digital_sticks: Vec<DigitalStickMapping>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -161,6 +162,19 @@ pub struct AnalogZoneMapping {
     pub max: f64,
     pub target: EventCode,
     pub target_name: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct DigitalStickMapping {
+    pub x_axis: EventCode,
+    pub x_axis_name: String,
+    pub y_axis: EventCode,
+    pub y_axis_name: String,
+    pub threshold: f64,
+    pub output_x: EventCode,
+    pub output_x_name: String,
+    pub output_y: EventCode,
+    pub output_y_name: String,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -305,6 +319,8 @@ struct RawCommandObject {
 #[derive(Debug, Default, Deserialize)]
 struct RawAnalogSettings {
     axes: Option<Vec<RawAnalogTuning>>,
+    digital_sticks: Option<Vec<RawDigitalStickMapping>>,
+    digital: Option<Vec<RawDigitalStickMapping>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -333,6 +349,17 @@ struct RawAnalogZoneMapping {
     min: Option<f64>,
     max: Option<f64>,
     threshold: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawDigitalStickMapping {
+    x_axis: Option<String>,
+    y_axis: Option<String>,
+    x: Option<String>,
+    y: Option<String>,
+    threshold: Option<f64>,
+    output_x: Option<String>,
+    output_y: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -511,6 +538,15 @@ impl AnalogSettings {
             .iter()
             .map(|tuning| (tuning.code, tuning.clone()))
             .collect()
+    }
+
+    pub fn digital_stick_sources(&self) -> HashMap<EventCode, Vec<usize>> {
+        let mut sources = HashMap::<EventCode, Vec<usize>>::new();
+        for (index, stick) in self.digital_sticks.iter().enumerate() {
+            sources.entry(stick.x_axis).or_default().push(index);
+            sources.entry(stick.y_axis).or_default().push(index);
+        }
+        sources
     }
 }
 
@@ -1488,6 +1524,7 @@ fn parse_analog_settings(raw: Option<RawAnalogSettings>) -> Result<AnalogSetting
     };
 
     let mut axes = Vec::new();
+    let raw_digital_sticks = raw.digital_sticks.or(raw.digital);
     for axis in raw.axes.unwrap_or_default() {
         let code = parse_event_code(&axis.code)
             .ok_or_else(|| anyhow!("unknown analog axis {}", axis.code))?;
@@ -1557,7 +1594,12 @@ fn parse_analog_settings(raw: Option<RawAnalogSettings>) -> Result<AnalogSetting
         });
     }
 
-    Ok(AnalogSettings { axes })
+    let digital_sticks = parse_digital_sticks(raw_digital_sticks)?;
+
+    Ok(AnalogSettings {
+        axes,
+        digital_sticks,
+    })
 }
 
 fn parse_analog_curve(
@@ -1677,6 +1719,76 @@ fn analog_zone_default_range(name: &str) -> Result<(f64, f64)> {
         "custom" => Ok((0.5, 1.0)),
         other => Err(anyhow!("unknown analog zone {other}")),
     }
+}
+
+fn parse_digital_sticks(
+    raw_sticks: Option<Vec<RawDigitalStickMapping>>,
+) -> Result<Vec<DigitalStickMapping>> {
+    let mut sticks = Vec::new();
+    for (index, raw) in raw_sticks.unwrap_or_default().into_iter().enumerate() {
+        let context = format!("digital stick {}", index + 1);
+        let x_axis_name = raw
+            .x_axis
+            .or(raw.x)
+            .ok_or_else(|| anyhow!("{context} requires x_axis"))?;
+        let y_axis_name = raw
+            .y_axis
+            .or(raw.y)
+            .ok_or_else(|| anyhow!("{context} requires y_axis"))?;
+        let x_axis = parse_centered_analog_axis(&x_axis_name, &context)?;
+        let y_axis = parse_centered_analog_axis(&y_axis_name, &context)?;
+        if x_axis == y_axis {
+            return Err(anyhow!("{context} requires different x_axis and y_axis"));
+        }
+
+        let threshold = raw.threshold.unwrap_or(0.5);
+        if !(0.01..=1.0).contains(&threshold) {
+            return Err(anyhow!("{context} threshold must be between 0.01 and 1.0"));
+        }
+
+        let output_x_name = raw.output_x.unwrap_or_else(|| "abs:hat0x".to_string());
+        let output_y_name = raw.output_y.unwrap_or_else(|| "abs:hat0y".to_string());
+        let output_x = parse_hat_output_axis(&output_x_name, "abs:hat0x", &context)?;
+        let output_y = parse_hat_output_axis(&output_y_name, "abs:hat0y", &context)?;
+
+        sticks.push(DigitalStickMapping {
+            x_axis,
+            x_axis_name: x_axis.name(),
+            y_axis,
+            y_axis_name: y_axis.name(),
+            threshold,
+            output_x,
+            output_x_name: output_x.name(),
+            output_y,
+            output_y_name: output_y.name(),
+        });
+    }
+    Ok(sticks)
+}
+
+fn parse_centered_analog_axis(value: &str, context: &str) -> Result<EventCode> {
+    let code = parse_event_code(value).ok_or_else(|| anyhow!("unknown {context} axis {value}"))?;
+    let range = AxisRange::for_event(code)
+        .ok_or_else(|| anyhow!("{context} axis {} must be an absolute axis", code.name()))?;
+    if !range.centered {
+        return Err(anyhow!("{context} axis {} must be centered", code.name()));
+    }
+    if !virtual_xbox_supports(code) {
+        return Err(anyhow!(
+            "{context} axis {} is not supported by the current virtual pad",
+            code.name()
+        ));
+    }
+    Ok(code)
+}
+
+fn parse_hat_output_axis(value: &str, expected: &str, context: &str) -> Result<EventCode> {
+    let code =
+        parse_event_code(value).ok_or_else(|| anyhow!("unknown {context} output axis {value}"))?;
+    if code.kind != EventKind::Absolute || code.name() != expected {
+        return Err(anyhow!("{context} output axis must be {expected}"));
+    }
+    Ok(code)
 }
 
 fn parse_layer_activation(raw: RawLayerActivation, layer_id: &str) -> Result<LayerActivation> {
@@ -2422,6 +2534,10 @@ analog:
         - name: high
           min: 0.70
           to: key:space
+  digital_sticks:
+    - x_axis: abs:x
+      y_axis: abs:y
+      threshold: 0.45
 "#,
             Path::new("analog.yaml"),
         )
@@ -2444,6 +2560,12 @@ analog:
         assert_eq!(profile.analog.axes[1].zones[1].min, 0.70);
         assert_eq!(profile.analog.axes[1].zones[1].target_name, "key:space");
         assert_eq!(profile.analog.tuning_table().len(), 2);
+        assert_eq!(profile.analog.digital_sticks.len(), 1);
+        assert_eq!(profile.analog.digital_sticks[0].x_axis_name, "abs:x");
+        assert_eq!(profile.analog.digital_sticks[0].y_axis_name, "abs:y");
+        assert_eq!(profile.analog.digital_sticks[0].threshold, 0.45);
+        assert_eq!(profile.analog.digital_sticks[0].output_x_name, "abs:hat0x");
+        assert_eq!(profile.analog.digital_sticks[0].output_y_name, "abs:hat0y");
     }
 
     #[test]
@@ -2538,6 +2660,35 @@ analog:
         .unwrap_err()
         .to_string();
         assert!(error.contains("min/max"), "{error}");
+
+        let error = parse_profile_bytes(
+            br#"
+id: bad-digital-stick-trigger
+analog:
+  digital_sticks:
+    - x_axis: abs:z
+      y_axis: abs:y
+"#,
+            Path::new("bad-digital-stick-trigger.yaml"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("must be centered"), "{error}");
+
+        let error = parse_profile_bytes(
+            br#"
+id: bad-digital-stick-threshold
+analog:
+  digital_sticks:
+    - x_axis: abs:x
+      y_axis: abs:y
+      threshold: 1.5
+"#,
+            Path::new("bad-digital-stick-threshold.yaml"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("threshold"), "{error}");
     }
 
     #[test]

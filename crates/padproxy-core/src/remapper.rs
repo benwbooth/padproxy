@@ -2,8 +2,8 @@ use crate::event_code::{event_from_input, virtual_output_supports, EventCode, Ev
 use crate::outputs::{output_device, supported_output_ids};
 use crate::profiles::{
     ActivatorKind, ActivatorSettings, AnalogTuning, CommandAction, CommandSettings,
-    LayerActivation, LayerActivationMode, MacroEvent, MacroEventKind, MacroMode, MacroSettings,
-    Mapping, MappingAction, Profile,
+    DigitalStickMapping, LayerActivation, LayerActivationMode, MacroEvent, MacroEventKind,
+    MacroMode, MacroSettings, Mapping, MappingAction, Profile,
 };
 use anyhow::{anyhow, Context, Result};
 use evdev::uinput::VirtualDevice;
@@ -55,6 +55,8 @@ pub struct RemapRuntime {
     pending_activators: HashMap<EventCode, PendingActivator>,
     analog_tuning: HashMap<EventCode, AnalogTuning>,
     active_analog_zones: HashSet<(EventCode, usize)>,
+    digital_stick_sources: HashMap<EventCode, Vec<usize>>,
+    digital_stick_states: Vec<DigitalStickState>,
     relative_axis_states: HashMap<EventCode, RelativeAxisState>,
     virtual_nodes: Vec<String>,
 }
@@ -88,6 +90,14 @@ struct ScheduledMacroEvent {
     value: i32,
 }
 
+struct DigitalStickState {
+    mapping: DigitalStickMapping,
+    x_value: i32,
+    y_value: i32,
+    output_x_value: i32,
+    output_y_value: i32,
+}
+
 struct RelativeAxisState {
     target: EventCode,
     unit_value: f64,
@@ -100,6 +110,18 @@ struct PendingActivator {
     count: u8,
     required_count: u8,
     due: Option<Instant>,
+}
+
+impl DigitalStickState {
+    fn new(mapping: DigitalStickMapping) -> Self {
+        Self {
+            mapping,
+            x_value: 0,
+            y_value: 0,
+            output_x_value: 0,
+            output_y_value: 0,
+        }
+    }
 }
 
 pub fn launch_with_remap(options: LaunchOptions) -> Result<i32> {
@@ -191,6 +213,15 @@ impl RemapRuntime {
             })
             .collect();
         let analog_tuning = options.profile.analog.tuning_table();
+        let digital_stick_sources = options.profile.analog.digital_stick_sources();
+        let digital_stick_states = options
+            .profile
+            .analog
+            .digital_sticks
+            .iter()
+            .cloned()
+            .map(DigitalStickState::new)
+            .collect();
 
         Ok(Self {
             profile: options.profile,
@@ -211,6 +242,8 @@ impl RemapRuntime {
             pending_activators: HashMap::new(),
             analog_tuning,
             active_analog_zones: HashSet::new(),
+            digital_stick_sources,
+            digital_stick_states,
             relative_axis_states: HashMap::new(),
             virtual_nodes,
         })
@@ -539,6 +572,7 @@ impl RemapRuntime {
         output: &mut Vec<InputEvent>,
     ) {
         let resolved = self.resolved_mapping(source_event);
+        self.push_digital_stick_events(source_event, value, output);
         self.push_analog_zone_events(source_event, resolved.target, value, output);
         if resolved.action != MappingAction::Map
             || (!self.profile.passthrough && !resolved.mapped)
@@ -553,6 +587,51 @@ impl RemapRuntime {
         }
         let value = self.apply_analog_tuning(source_event, resolved.target, value);
         push_input_event(output, resolved.target, value);
+    }
+
+    fn push_digital_stick_events(
+        &mut self,
+        source_event: EventCode,
+        value: i32,
+        output: &mut Vec<InputEvent>,
+    ) {
+        let Some(indexes) = self.digital_stick_sources.get(&source_event).cloned() else {
+            return;
+        };
+
+        for index in indexes {
+            let Some(state) = self.digital_stick_states.get_mut(index) else {
+                continue;
+            };
+            if source_event == state.mapping.x_axis {
+                state.x_value = value;
+            }
+            if source_event == state.mapping.y_axis {
+                state.y_value = value;
+            }
+
+            let x_unit = digital_axis_unit_value(
+                state.mapping.x_axis,
+                state.x_value,
+                self.analog_tuning.get(&state.mapping.x_axis),
+            );
+            let y_unit = digital_axis_unit_value(
+                state.mapping.y_axis,
+                state.y_value,
+                self.analog_tuning.get(&state.mapping.y_axis),
+            );
+            let next_x = digital_axis_direction(x_unit, state.mapping.threshold);
+            let next_y = digital_axis_direction(y_unit, state.mapping.threshold);
+
+            if next_x != state.output_x_value {
+                state.output_x_value = next_x;
+                push_input_event(output, state.mapping.output_x, next_x);
+            }
+            if next_y != state.output_y_value {
+                state.output_y_value = next_y;
+                push_input_event(output, state.mapping.output_y, next_y);
+            }
+        }
     }
 
     fn update_relative_axis_state(
@@ -903,6 +982,26 @@ fn relative_axis_step(unit_value: f64, remainder: &mut f64) -> i32 {
     step as i32
 }
 
+fn digital_axis_unit_value(
+    source_event: EventCode,
+    value: i32,
+    tuning: Option<&AnalogTuning>,
+) -> f64 {
+    let value = tuning.map(|tuning| tuning.apply(value)).unwrap_or(value);
+    normalized_absolute_axis_value(source_event, value).unwrap_or(0.0)
+}
+
+fn digital_axis_direction(unit_value: f64, threshold: f64) -> i32 {
+    let threshold = threshold.clamp(0.01, 1.0);
+    if unit_value >= threshold {
+        1
+    } else if unit_value <= -threshold {
+        -1
+    } else {
+        0
+    }
+}
+
 fn create_virtual_xbox_pad(profile: &Profile) -> Result<VirtualDevice> {
     let mut keys = AttributeSet::<KeyCode>::new();
     for key in [
@@ -990,12 +1089,19 @@ fn profile_output_events(profile: &Profile) -> HashSet<EventCode> {
     for axis in &profile.analog.axes {
         events.extend(axis.zones.iter().map(|zone| zone.target));
     }
+    for stick in &profile.analog.digital_sticks {
+        events.insert(stick.output_x);
+        events.insert(stick.output_y);
+    }
     events
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{profile_output_events, relative_axis_step, relative_axis_unit_value};
+    use super::{
+        digital_axis_direction, digital_axis_unit_value, profile_output_events, relative_axis_step,
+        relative_axis_unit_value,
+    };
     use crate::event_code::parse_event_code;
     use crate::profiles::parse_profile_bytes;
     use std::path::Path;
@@ -1042,6 +1148,26 @@ mappings:
     }
 
     #[test]
+    fn digital_stick_outputs_are_virtual_output_capabilities() {
+        let profile = parse_profile_bytes(
+            br#"
+id: digital-stick-output
+analog:
+  digital_sticks:
+    - x_axis: abs:x
+      y_axis: abs:y
+mappings: []
+"#,
+            Path::new("digital-stick-output.yaml"),
+        )
+        .unwrap();
+
+        let events = profile_output_events(&profile);
+        assert!(events.contains(&parse_event_code("abs:hat0x").unwrap()));
+        assert!(events.contains(&parse_event_code("abs:hat0y").unwrap()));
+    }
+
+    #[test]
     fn analog_values_become_relative_mouse_steps() {
         let source = parse_event_code("abs:x").unwrap();
         assert_eq!(relative_axis_unit_value(source, 0, None), 0.0);
@@ -1059,5 +1185,14 @@ mappings:
         let mut fractional_remainder = 0.0;
         assert_eq!(relative_axis_step(0.03, &mut fractional_remainder), 0);
         assert_eq!(relative_axis_step(0.03, &mut fractional_remainder), 1);
+    }
+
+    #[test]
+    fn analog_values_become_digital_directions() {
+        let source = parse_event_code("abs:x").unwrap();
+        assert_eq!(digital_axis_unit_value(source, 0, None), 0.0);
+        assert_eq!(digital_axis_direction(0.49, 0.5), 0);
+        assert_eq!(digital_axis_direction(0.50, 0.5), 1);
+        assert_eq!(digital_axis_direction(-0.50, 0.5), -1);
     }
 }
