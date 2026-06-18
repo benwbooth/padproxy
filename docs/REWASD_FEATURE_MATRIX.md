@@ -191,7 +191,9 @@ Source pages consulted:
 ## Automation and Integration
 
 - Autodetect game process and apply profile.
-- CLI apply/select-slot/clear-slot/remap/version/help.
+- CLI apply/select-slot/clear-slot/remap/version/help. Basic foreground
+  `remap`/`apply`, `launch`, list, version, and help commands done; slot
+  selection/clear commands remain.
 - Local API/DBus service.
 - Per-emulator/game launch integration.
 - Emergency remap off.

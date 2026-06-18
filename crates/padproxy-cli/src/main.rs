@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 use padproxy_core::linux::{list_devices, resolve_device};
 use padproxy_core::outputs::output_devices;
 use padproxy_core::profiles::{default_profile_dirs, load_profiles, Profile};
-use padproxy_core::remapper::{launch_with_remap, LaunchOptions};
+use padproxy_core::remapper::{launch_with_remap, LaunchOptions, RemapOptions, RemapRuntime};
 
 #[derive(Debug, Parser)]
 #[command(author, version, about)]
@@ -17,6 +17,18 @@ enum Command {
     ListDevices,
     ListOutputs,
     ListProfiles,
+    Remap {
+        #[arg(long)]
+        profile: String,
+        #[arg(long)]
+        controller: String,
+    },
+    Apply {
+        #[arg(long)]
+        profile: String,
+        #[arg(long)]
+        controller: String,
+    },
     Launch {
         #[arg(long)]
         profile: String,
@@ -83,6 +95,14 @@ fn main() -> Result<()> {
             })?;
             std::process::exit(code);
         }
+        Command::Remap {
+            profile,
+            controller,
+        }
+        | Command::Apply {
+            profile,
+            controller,
+        } => run_foreground_remap(&profile, &controller),
     }
 }
 
@@ -91,4 +111,24 @@ fn find_profile(selector: &str) -> Result<Profile> {
         .into_iter()
         .find(|profile| profile.id == selector || profile.name == selector)
         .ok_or_else(|| anyhow!("no profile matched {selector}"))
+}
+
+fn run_foreground_remap(profile: &str, controller: &str) -> Result<()> {
+    let profile = find_profile(profile)?;
+    let source_device_path = resolve_device(controller)?;
+    let mut runtime = RemapRuntime::start(RemapOptions {
+        profile,
+        source_device_path,
+    })?;
+    if !runtime.virtual_nodes().is_empty() {
+        eprintln!(
+            "PadProxy virtual pad: {}",
+            runtime.virtual_nodes().join(", ")
+        );
+    }
+    eprintln!("PadProxy remap is running. Press Ctrl-C to stop.");
+
+    loop {
+        runtime.pump_once()?;
+    }
 }

@@ -63,6 +63,14 @@ nix develop --command cargo run --bin padproxyctl -- list-outputs
 nix develop --command cargo run --bin padproxyctl -- list-profiles
 ```
 
+Run a foreground remap until Ctrl-C:
+
+```sh
+nix develop --command cargo run --bin padproxyctl -- remap \
+  --profile nes-2button-xa \
+  --controller /dev/input/event259
+```
+
 Launch a command through a profile:
 
 ```sh
