@@ -6,10 +6,14 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+base64 = "0.22.1"
 cxx.workspace = true
 cxx-qt.workspace = true
 cxx-qt-lib.workspace = true
+evdev.workspace = true
 padproxy-core.workspace = true
+png = "0.18.1"
+rscam = "0.5.5"
 serde_json.workspace = true
 
 [build-dependencies]

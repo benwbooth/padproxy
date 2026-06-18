@@ -18,6 +18,9 @@ pub mod qobject {
         #[qproperty(QString, capture_status)]
         #[qproperty(QString, remap_status)]
         #[qproperty(bool, remap_active)]
+        #[qproperty(QString, discover_preview)]
+        #[qproperty(QString, discover_status)]
+        #[qproperty(bool, discover_active)]
         type PadProxyController = super::PadProxyControllerRust;
 
         #[qinvokable]
@@ -52,6 +55,15 @@ pub mod qobject {
 
         #[qinvokable]
         fn load_controller_layout(self: Pin<&mut Self>, path: QString) -> QString;
+
+        #[qinvokable]
+        fn start_discover(self: Pin<&mut Self>, controller_path: QString, camera_path: QString);
+
+        #[qinvokable]
+        fn poll_discover(self: Pin<&mut Self>) -> QString;
+
+        #[qinvokable]
+        fn stop_discover(self: Pin<&mut Self>) -> QString;
     }
 }
 
@@ -80,9 +92,13 @@ pub struct PadProxyControllerRust {
     capture_status: QString,
     remap_status: QString,
     remap_active: bool,
+    discover_preview: QString,
+    discover_status: QString,
+    discover_active: bool,
     capture_device_path: String,
     capture_reader: Option<CaptureReader>,
     remap_session: Option<RemapSession>,
+    discover_session: Option<crate::discover::DiscoverSession>,
 }
 
 impl qobject::PadProxyController {
@@ -327,6 +343,88 @@ mappings:\n\
                 QString::from("")
             }
         }
+    }
+
+    /// Start a webcam button-discovery session.
+    pub fn start_discover(self: Pin<&mut Self>, controller_path: QString, camera_path: QString) {
+        let mut this = self;
+        let session = crate::discover::DiscoverSession::start(
+            controller_path.to_string(),
+            camera_path.to_string(),
+        );
+        {
+            let mut rust = this.as_mut().rust_mut();
+            rust.discover_session = Some(session);
+        }
+        this.as_mut().set_discover_active(true);
+        this.as_mut()
+            .set_discover_status(QString::from("Starting camera…"));
+    }
+
+    /// Poll the discovery session; updates preview/status and returns a JSON
+    /// array of buttons located since the last poll.
+    pub fn poll_discover(self: Pin<&mut Self>) -> QString {
+        use crate::discover::DiscoverMessage;
+        let mut this = self;
+
+        let messages = {
+            let rust = this.as_mut().rust_mut();
+            match rust.discover_session.as_ref() {
+                Some(session) => session.poll(),
+                None => Vec::new(),
+            }
+        };
+
+        let mut located: Vec<serde_json::Value> = Vec::new();
+        let mut preview: Option<QString> = None;
+        let mut status: Option<QString> = None;
+        let mut failed = false;
+        for message in messages {
+            match message {
+                DiscoverMessage::Located { code, x, y } => {
+                    located.push(serde_json::json!({ "code": code, "x": x, "y": y }));
+                }
+                DiscoverMessage::Preview(uri) => preview = Some(QString::from(&uri)),
+                DiscoverMessage::Status(text) => status = Some(QString::from(&text)),
+                DiscoverMessage::Failed(error) => {
+                    status = Some(QString::from(&format!("Discovery failed: {error}")));
+                    failed = true;
+                }
+            }
+        }
+
+        if let Some(preview) = preview {
+            this.as_mut().set_discover_preview(preview);
+        }
+        if let Some(status) = status {
+            this.as_mut().set_discover_status(status);
+        }
+        if failed {
+            this.as_mut().set_discover_active(false);
+        }
+
+        QString::from(&serde_json::to_string(&located).unwrap_or_else(|_| "[]".to_string()))
+    }
+
+    /// Stop discovery and return the accumulated layout JSON.
+    pub fn stop_discover(self: Pin<&mut Self>) -> QString {
+        let mut this = self;
+        let json = {
+            let mut rust = this.as_mut().rust_mut();
+            let json = rust
+                .discover_session
+                .as_ref()
+                .map(|session| session.layout_json())
+                .unwrap_or_default();
+            if let Some(mut session) = rust.discover_session.take() {
+                session.stop();
+            }
+            json
+        };
+        this.as_mut().set_discover_active(false);
+        this.as_mut()
+            .set_discover_status(QString::from("Discovery stopped."));
+        QString::from(&json)
     }
 }
 

@@ -461,9 +461,8 @@ ApplicationWindow {
         : controllerTemplates
     property var controllerTemplateNames: effectiveTemplates.map(function(template) { return template.name })
 
-    // Build a diagram template from a discovered layout JSON file.
-    function loadCustomLayout(path) {
-        const text = backend.load_controller_layout(path)
+    // Build a diagram template from a discovered layout JSON string.
+    function loadCustomLayoutFromText(text) {
         if (!text || text.length === 0)
             return false
         let parsed
@@ -486,6 +485,11 @@ ApplicationWindow {
         })
         root.customTemplate = { name: "My controller (discovered)", image: "", controls: controls }
         return true
+    }
+
+    // Build a diagram template from a discovered layout JSON file.
+    function loadCustomLayout(path) {
+        return root.loadCustomLayoutFromText(backend.load_controller_layout(path))
     }
 
     onProfilesModelChanged: Qt.callLater(function() {
@@ -1958,6 +1962,152 @@ ApplicationWindow {
         }
     }
 
+    // ---- Webcam button discovery flow -----------------------------------
+    Dialog {
+        id: discoverDialog
+        title: "Discover controller from webcam"
+        modal: true
+        anchors.centerIn: Overlay.overlay
+        width: Math.min(640, root.width - 80)
+        standardButtons: Dialog.Close
+        Material.background: root.colSurface
+
+        property string cameraPath: "/dev/video0"
+        property int locatedCount: 0
+        property string locatedText: ""
+
+        function openFor() {
+            if (!root.selectedDevice()) {
+                backend.status = "Pick the controller you're holding in the left panel first."
+                return
+            }
+            locatedCount = 0
+            locatedText = ""
+            open()
+        }
+
+        function startDiscovery() {
+            const device = root.selectedDevice()
+            if (!device)
+                return
+            locatedCount = 0
+            locatedText = ""
+            backend.start_discover(device.path, cameraPath)
+        }
+
+        onClosed: if (backend.discover_active) backend.stop_discover()
+
+        Timer {
+            interval: 150
+            repeat: true
+            running: backend.discover_active
+            onTriggered: {
+                const res = backend.poll_discover()
+                try {
+                    const arr = JSON.parse(res)
+                    for (const b of arr) {
+                        discoverDialog.locatedCount += 1
+                        discoverDialog.locatedText += root.eventLabel(b.code) + "   "
+                    }
+                } catch (e) {}
+            }
+        }
+
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 10
+
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: root.colText
+                text: "Point a webcam at your controller, click Start, then press each button "
+                    + "once — distinctly, one at a time. Each press is placed where you pressed it. "
+                    + "Click \"Use this layout\" when done."
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                Label { text: "Camera"; color: root.colTextDim }
+                TextField {
+                    text: discoverDialog.cameraPath
+                    Layout.preferredWidth: 150
+                    enabled: !backend.discover_active
+                    onTextChanged: discoverDialog.cameraPath = text
+                    ToolTip.visible: hovered
+                    ToolTip.text: "Webcam device (e.g. /dev/video0 or /dev/video1)."
+                }
+                Button {
+                    text: backend.discover_active ? "Restart" : "Start"
+                    onClicked: discoverDialog.startDiscovery()
+                }
+                Item { Layout.fillWidth: true }
+                BusyIndicator {
+                    running: backend.discover_active
+                    visible: backend.discover_active
+                    implicitWidth: 28
+                    implicitHeight: 28
+                }
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 300
+                color: "#0c0e12"
+                border.color: root.colBorder
+                radius: 6
+                clip: true
+
+                Image {
+                    anchors.fill: parent
+                    anchors.margins: 6
+                    fillMode: Image.PreserveAspectFit
+                    cache: false
+                    smooth: true
+                    source: backend.discover_preview
+                    visible: backend.discover_preview.length > 0
+                }
+                Label {
+                    anchors.centerIn: parent
+                    visible: backend.discover_preview.length === 0
+                    color: root.colTextDim
+                    text: backend.discover_active ? "Waiting for camera…" : "Click Start to open the webcam"
+                }
+            }
+
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: root.colAccent
+                text: backend.discover_status
+                visible: backend.discover_status.length > 0
+            }
+
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: root.colText
+                text: discoverDialog.locatedCount > 0
+                    ? ("Located " + discoverDialog.locatedCount + ":   " + discoverDialog.locatedText)
+                    : "No buttons located yet."
+            }
+
+            Button {
+                text: "Use this layout"
+                highlighted: true
+                Layout.alignment: Qt.AlignRight
+                enabled: discoverDialog.locatedCount > 0
+                onClicked: {
+                    const json = backend.stop_discover()
+                    if (root.loadCustomLayoutFromText(json))
+                        controllerTemplateBox.currentIndex = root.effectiveTemplates.length - 1
+                    discoverDialog.close()
+                }
+            }
+        }
+    }
+
     // ---- Name-this-profile dialog (shown on Save when unnamed) ----------
     Dialog {
         id: nameDialog
@@ -3099,11 +3249,19 @@ ApplicationWindow {
                                         }
 
                                         Button {
-                                            text: "Load discovered…"
+                                            text: "Discover from webcam…"
+                                            highlighted: true
+                                            onClicked: discoverDialog.openFor()
+                                            ToolTip.visible: hovered
+                                            ToolTip.text: "Point a webcam at your controller and press each button — "
+                                                + "PadProxy builds a diagram of your real controller."
+                                        }
+
+                                        Button {
+                                            text: "Load file…"
                                             onClicked: layoutFileDialog.open()
                                             ToolTip.visible: hovered
-                                            ToolTip.text: "Load a layout captured with 'padproxyctl discover-cam' to get a "
-                                                + "diagram matching your real controller, with buttons where you pressed them."
+                                            ToolTip.text: "Load a layout previously saved as a JSON file."
                                         }
 
                                         Item {
