@@ -100,9 +100,10 @@ Source pages consulted:
 - Shift activation by hold, toggle, custom activator, or shortcut.
 - Copy, paste, rename, and clear layers. Basic structured-editor operations
   done.
-- Four config slots per device.
+- Four config slots per device. Basic persistent CLI slots done.
 - Slot switching by hotkey.
-- Apply, select, and clear slots from CLI/API.
+- Apply, select, and clear slots from CLI/API. Basic CLI assign, select,
+  apply, list, and clear slot commands done; API commands remain.
 
 ## Analog Controls
 
@@ -192,8 +193,8 @@ Source pages consulted:
 
 - Autodetect game process and apply profile.
 - CLI apply/select-slot/clear-slot/remap/version/help. Basic foreground
-  `remap`/`apply`, `launch`, list, version, and help commands done; slot
-  selection/clear commands remain.
+  `remap`/`apply`, `apply-slot`, `launch`, list, slot management, version, and
+  help commands done.
 - Local API/DBus service.
 - Per-emulator/game launch integration.
 - Emergency remap off.

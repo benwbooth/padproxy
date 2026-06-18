@@ -71,6 +71,25 @@ nix develop --command cargo run --bin padproxyctl -- remap \
   --controller /dev/input/event259
 ```
 
+Manage four foreground remap slots per device:
+
+```sh
+nix develop --command cargo run --bin padproxyctl -- assign-slot \
+  --controller /dev/input/event259 \
+  --slot 1 \
+  --profile nes-2button-xa
+nix develop --command cargo run --bin padproxyctl -- select-slot \
+  --controller /dev/input/event259 \
+  --slot 1
+nix develop --command cargo run --bin padproxyctl -- apply-slot \
+  --controller /dev/input/event259
+nix develop --command cargo run --bin padproxyctl -- list-slots \
+  --controller /dev/input/event259
+```
+
+Slots are stored in `~/.config/padproxy/slots.json`, or in
+`$PADPROXY_SLOT_FILE` when that variable is set.
+
 Launch a command through a profile:
 
 ```sh
