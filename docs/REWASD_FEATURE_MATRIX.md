@@ -81,7 +81,8 @@ Source pages consulted:
   macro events.
 - Pauses. Done for controller macros.
 - Rumble events.
-- Break/cancel events.
+- Break/cancel events. Basic YAML macro cancel/break/stop events done; they
+  stop queued and held macro output at their scheduled point in the sequence.
 - Execute-at-once macros. Done for press-triggered controller macros.
 - Hold-until-release macros. Basic controller hold macros done.
 - Relative stick deflection in macros.

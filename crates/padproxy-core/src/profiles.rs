@@ -129,6 +129,7 @@ pub enum MacroEventKind {
     Axis,
     Relative,
     Pause,
+    Cancel,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -325,6 +326,10 @@ struct RawMacroEvent {
     rel: Option<String>,
     value: Option<i32>,
     pause_ms: Option<u64>,
+    cancel: Option<bool>,
+    #[serde(rename = "break")]
+    break_event: Option<bool>,
+    stop: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1538,7 +1543,10 @@ fn automatic_hold_release_events(events: &[MacroEvent]) -> Vec<MacroEvent> {
                 }
                 axis_values.insert(code, event.value);
             }
-            MacroEventKind::Tap | MacroEventKind::Relative | MacroEventKind::Pause => {}
+            MacroEventKind::Tap
+            | MacroEventKind::Relative
+            | MacroEventKind::Pause
+            | MacroEventKind::Cancel => {}
         }
     }
 
@@ -1571,16 +1579,22 @@ fn automatic_hold_release_events(events: &[MacroEvent]) -> Vec<MacroEvent> {
 }
 
 fn macro_events_duration_ms(events: &[MacroEvent]) -> u64 {
-    events.iter().fold(0_u64, |duration, event| {
-        duration.saturating_add(match event.kind {
+    let mut duration = 0_u64;
+    for event in events {
+        if event.kind == MacroEventKind::Cancel {
+            break;
+        }
+        duration = duration.saturating_add(match event.kind {
             MacroEventKind::Tap => MACRO_TAP_RELEASE_MS,
             MacroEventKind::Pause => event.pause_ms,
             MacroEventKind::Down
             | MacroEventKind::Up
             | MacroEventKind::Axis
-            | MacroEventKind::Relative => 0,
-        })
-    })
+            | MacroEventKind::Relative
+            | MacroEventKind::Cancel => 0,
+        });
+    }
+    duration
 }
 
 fn parse_macro_event(
@@ -1596,6 +1610,9 @@ fn parse_macro_event(
         raw.axis.is_some(),
         raw.rel.is_some(),
         raw.pause_ms.is_some(),
+        raw.cancel.is_some(),
+        raw.break_event.is_some(),
+        raw.stop.is_some(),
     ]
     .into_iter()
     .filter(|specified| *specified)
@@ -1603,9 +1620,26 @@ fn parse_macro_event(
 
     if specified != 1 {
         return Err(anyhow!(
-            "macro event {} from {from_name} in {context} must set exactly one of down, up, tap, axis, rel, or pause_ms",
+            "macro event {} from {from_name} in {context} must set exactly one of down, up, tap, axis, rel, pause_ms, cancel, break, or stop",
             index + 1
         ));
+    }
+
+    if raw.cancel.is_some() || raw.break_event.is_some() || raw.stop.is_some() {
+        let enabled = raw.cancel.or(raw.break_event).or(raw.stop).unwrap_or(false);
+        if !enabled {
+            return Err(anyhow!(
+                "macro cancel event {} from {from_name} in {context} must be true",
+                index + 1
+            ));
+        }
+        return Ok(MacroEvent {
+            kind: MacroEventKind::Cancel,
+            code: None,
+            code_name: String::new(),
+            value: 0,
+            pause_ms: 0,
+        });
     }
 
     if let Some(pause_ms) = raw.pause_ms {
@@ -2766,6 +2800,65 @@ mappings:
         assert_eq!(macro_settings.events[4].value, 12000);
         assert_eq!(macro_settings.duration_ms, 80);
         assert_eq!(macro_settings.release_duration_ms, 0);
+    }
+
+    #[test]
+    fn parses_macro_cancel_events() {
+        let profile = parse_profile_bytes(
+            br#"
+id: macro-cancel
+mappings:
+  - from: btn:start
+    action: macro
+    macro:
+      events:
+        - down: btn:south
+        - pause_ms: 100
+        - cancel: true
+        - tap: btn:east
+  - from: btn:select
+    action: macro
+    macro:
+      events:
+        - break: true
+  - from: btn:mode
+    action: macro
+    macro:
+      events:
+        - stop: true
+"#,
+            Path::new("macro-cancel.yaml"),
+        )
+        .unwrap();
+
+        let macro_settings = profile.mappings[0].macro_settings.as_ref().unwrap();
+        assert_eq!(macro_settings.events.len(), 4);
+        assert_eq!(macro_settings.events[2].kind, MacroEventKind::Cancel);
+        assert_eq!(macro_settings.duration_ms, 100);
+        assert_eq!(
+            profile.mappings[1].macro_settings.as_ref().unwrap().events[0].kind,
+            MacroEventKind::Cancel
+        );
+        assert_eq!(
+            profile.mappings[2].macro_settings.as_ref().unwrap().events[0].kind,
+            MacroEventKind::Cancel
+        );
+
+        let error = parse_profile_bytes(
+            br#"
+id: bad-macro-cancel
+mappings:
+  - from: btn:start
+    action: macro
+    macro:
+      events:
+        - cancel: false
+"#,
+            Path::new("bad-macro-cancel.yaml"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("must be true"), "{error}");
     }
 
     #[test]

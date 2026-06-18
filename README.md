@@ -107,7 +107,8 @@ structured editor or hold a virtual button until the source is released; the
 editor displays the parsed macro duration beside each macro row. The
 raw YAML editor also supports explicit controller/keyboard/mouse button down/up
 events, relative mouse-axis events with `rel` plus `value`, axis set events,
-release-side events, and pauses. Command rows can run PadProxy commands such as
+release-side events, pauses, and timed `cancel`/`break` events that stop queued
+macro output. Command rows can run PadProxy commands such as
 stopping queued and held macro output or launch an external command without
 blocking remap input. The editor shows implemented and planned
 virtual outputs, but only implemented outputs can be applied. `Apply` starts a
@@ -209,6 +210,13 @@ mappings:
         - tap: btn:north
         - rel: rel:wheel
           value: -1
+  - from: btn:mode
+    action: macro
+    macro:
+      events:
+        - down: btn:south
+        - pause_ms: 250
+        - cancel: true
   - from: btn:select
     action: command
     command: stop_macros

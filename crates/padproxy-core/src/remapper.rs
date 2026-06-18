@@ -90,8 +90,12 @@ struct TurboState {
 
 struct ScheduledMacroEvent {
     due: Instant,
-    event: EventCode,
-    value: i32,
+    action: ScheduledMacroAction,
+}
+
+enum ScheduledMacroAction {
+    Output { event: EventCode, value: i32 },
+    Cancel,
 }
 
 struct StickTransformState {
@@ -810,14 +814,18 @@ impl RemapRuntime {
                     if let Some(code) = event.code {
                         self.queue_macro_event(ScheduledMacroEvent {
                             due: now + offset,
-                            event: code,
-                            value: 1,
+                            action: ScheduledMacroAction::Output {
+                                event: code,
+                                value: 1,
+                            },
                         });
                         offset += Duration::from_millis(MACRO_TAP_RELEASE_MS);
                         self.queue_macro_event(ScheduledMacroEvent {
                             due: now + offset,
-                            event: code,
-                            value: 0,
+                            action: ScheduledMacroAction::Output {
+                                event: code,
+                                value: 0,
+                            },
                         });
                     }
                 }
@@ -828,10 +836,19 @@ impl RemapRuntime {
                     if let Some(code) = event.code {
                         self.queue_macro_event(ScheduledMacroEvent {
                             due: now + offset,
-                            event: code,
-                            value: event.value,
+                            action: ScheduledMacroAction::Output {
+                                event: code,
+                                value: event.value,
+                            },
                         });
                     }
+                }
+                MacroEventKind::Cancel => {
+                    self.queue_macro_event(ScheduledMacroEvent {
+                        due: now + offset,
+                        action: ScheduledMacroAction::Cancel,
+                    });
+                    break;
                 }
             }
         }
@@ -947,13 +964,18 @@ impl RemapRuntime {
                 .macro_queue
                 .pop_front()
                 .expect("front existed before pop");
-            let value = if scheduled.event.kind == EventKind::Absolute {
-                self.apply_analog_tuning(scheduled.event, scheduled.event, scheduled.value)
-            } else {
-                scheduled.value
-            };
-            self.record_macro_output(scheduled.event, value);
-            push_input_event(output, scheduled.event, value);
+            match scheduled.action {
+                ScheduledMacroAction::Output { event, value } => {
+                    let value = if event.kind == EventKind::Absolute {
+                        self.apply_analog_tuning(event, event, value)
+                    } else {
+                        value
+                    };
+                    self.record_macro_output(event, value);
+                    push_input_event(output, event, value);
+                }
+                ScheduledMacroAction::Cancel => self.stop_all_macros(output),
+            }
         }
     }
 
