@@ -111,7 +111,9 @@ Source pages consulted:
 - Copy, paste, rename, and clear layers. Basic structured-editor operations
   done.
 - Four config slots per device. Basic persistent CLI slots done.
-- Slot switching by hotkey.
+- Slot switching by hotkey. Done: `next_slot`, `prev_slot`, and
+  `select_slot` (with a `slot:`) command mappings switch the controller's
+  active slot during a `padproxyctl apply-slot` session.
 - Apply, select, and clear slots from CLI/API. Done: CLI assign, select,
   apply, list, and clear slot commands, plus matching `assign_slot`,
   `select_slot`, `clear_slot`, `list_slots`, and `apply_slot` commands over the

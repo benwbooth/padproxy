@@ -44,6 +44,14 @@ pub struct RemapReport {
     pub virtual_nodes: Vec<String>,
 }
 
+/// A slot switch requested by a command mapping during a remap.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SlotRequest {
+    Select(u8),
+    Next,
+    Prev,
+}
+
 pub struct RemapRuntime {
     profile: Profile,
     sources: Vec<Device>,
@@ -83,6 +91,8 @@ pub struct RemapRuntime {
     ff_effects: HashMap<i16, FFEffect>,
     /// Optional touchpad-zone source and its live state.
     touchpad: Option<TouchpadState>,
+    /// A pending slot switch requested by a command mapping.
+    slot_request: Option<SlotRequest>,
 }
 
 struct TouchpadState {
@@ -420,7 +430,13 @@ impl RemapRuntime {
             ff_source_index,
             ff_effects: HashMap::new(),
             touchpad,
+            slot_request: None,
         })
+    }
+
+    /// Take any pending slot switch requested by a command mapping.
+    pub fn take_slot_request(&mut self) -> Option<SlotRequest> {
+        self.slot_request.take()
     }
 
     pub fn virtual_nodes(&self) -> &[String] {
@@ -1218,7 +1234,20 @@ impl RemapRuntime {
                 self.stop_requested = true;
                 log_info!("remap", "remap_off command fired; stopping remap");
             }
+            CommandAction::SelectSlot => {
+                if let Some(slot) = settings.slot {
+                    self.request_slot(SlotRequest::Select(slot));
+                }
+            }
+            CommandAction::NextSlot => self.request_slot(SlotRequest::Next),
+            CommandAction::PrevSlot => self.request_slot(SlotRequest::Prev),
         }
+    }
+
+    fn request_slot(&mut self, request: SlotRequest) {
+        self.slot_request = Some(request);
+        self.stop_requested = true;
+        log_info!("remap", "slot switch requested: {request:?}");
     }
 
     fn spawn_command(&mut self, command_line: &[String]) {

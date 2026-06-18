@@ -168,6 +168,8 @@ pub struct MacroSettings {
 pub struct CommandSettings {
     pub action: CommandAction,
     pub command_line: Vec<String>,
+    /// Target slot for the `select_slot` command action.
+    pub slot: Option<u8>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -178,6 +180,12 @@ pub enum CommandAction {
     /// Emergency "turn remap off": stop the running remap, release the virtual
     /// device, and ungrab the source controller.
     RemapOff,
+    /// Switch the controller's active slot to a specific number.
+    SelectSlot,
+    /// Switch to the next slot.
+    NextSlot,
+    /// Switch to the previous slot.
+    PrevSlot,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -493,6 +501,7 @@ struct RawCommandObject {
     executable: Option<String>,
     shell: Option<String>,
     run: Option<RawCommandLine>,
+    slot: Option<u8>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1553,9 +1562,15 @@ fn parse_command_settings(
                     "run command mapping from {from_name} in {context} requires command_line"
                 ));
             }
+            if action == CommandAction::SelectSlot {
+                return Err(anyhow!(
+                    "select_slot command mapping from {from_name} in {context} requires a slot"
+                ));
+            }
             CommandSettings {
                 action,
                 command_line: Vec::new(),
+                slot: None,
             }
         }
         RawCommandSettings::Object(object) => parse_command_object(object, from_name, context)?,
@@ -1569,6 +1584,9 @@ fn command_action_keyword(action: CommandAction) -> &'static str {
         CommandAction::StopMacros => "stop_macros",
         CommandAction::RunCommand => "run_command",
         CommandAction::RemapOff => "remap_off",
+        CommandAction::SelectSlot => "select_slot",
+        CommandAction::NextSlot => "next_slot",
+        CommandAction::PrevSlot => "prev_slot",
     }
 }
 
@@ -1584,6 +1602,9 @@ fn parse_command_action(value: &str) -> Result<CommandAction> {
         | "emergency_off"
         | "emergency_remap_off"
         | "off" => Ok(CommandAction::RemapOff),
+        "select_slot" | "set_slot" | "slot" => Ok(CommandAction::SelectSlot),
+        "next_slot" | "slot_next" | "cycle_slot" => Ok(CommandAction::NextSlot),
+        "prev_slot" | "previous_slot" | "slot_prev" => Ok(CommandAction::PrevSlot),
         other => Err(anyhow!("unknown command action {other}")),
     }
 }
@@ -1604,6 +1625,7 @@ fn parse_command_object(
         executable,
         shell,
         run,
+        slot,
     } = object;
 
     let has_run_fields = command_line.is_some()
@@ -1624,12 +1646,23 @@ fn parse_command_object(
             return Ok(CommandSettings {
                 action: parse_command_action(&value)?,
                 command_line: Vec::new(),
+                slot,
             });
         }
     };
 
+    if action == CommandAction::SelectSlot && slot.is_none() {
+        return Err(anyhow!(
+            "select_slot command mapping from {from_name} in {context} requires a slot"
+        ));
+    }
+
     let command_line = match action {
-        CommandAction::StopMacros | CommandAction::RemapOff => {
+        CommandAction::StopMacros
+        | CommandAction::RemapOff
+        | CommandAction::SelectSlot
+        | CommandAction::NextSlot
+        | CommandAction::PrevSlot => {
             if has_run_fields {
                 return Err(anyhow!(
                     "{} command mapping from {from_name} in {context} cannot use command_line",
@@ -1655,6 +1688,7 @@ fn parse_command_object(
     Ok(CommandSettings {
         action,
         command_line,
+        slot,
     })
 }
 
@@ -3149,6 +3183,47 @@ mappings: []
             remap: Vec::new(),
         }];
         assert!(resolve_group_members(&members, &only_keyboard, &[]).is_empty());
+    }
+
+    #[test]
+    fn parses_slot_switch_command_mappings() {
+        let profile = parse_profile_bytes(
+            br#"
+id: slots
+mappings:
+  - from: btn:tl
+    command: next_slot
+  - from: btn:tr
+    command: prev_slot
+  - from: btn:mode
+    command:
+      action: select_slot
+      slot: 3
+"#,
+            Path::new("slots.yaml"),
+        )
+        .unwrap();
+        let actions: Vec<_> = profile
+            .mappings
+            .iter()
+            .map(|m| m.command.as_ref().unwrap().action)
+            .collect();
+        assert_eq!(
+            actions,
+            vec![
+                CommandAction::NextSlot,
+                CommandAction::PrevSlot,
+                CommandAction::SelectSlot
+            ]
+        );
+        assert_eq!(profile.mappings[2].command.as_ref().unwrap().slot, Some(3));
+
+        // select_slot without a slot number is rejected.
+        assert!(parse_profile_bytes(
+            b"id: bad\nmappings:\n  - from: btn:tl\n    command: select_slot\n",
+            Path::new("bad.yaml")
+        )
+        .is_err());
     }
 
     #[test]

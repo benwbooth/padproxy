@@ -12,7 +12,9 @@ use padproxy_core::outputs::output_devices;
 use padproxy_core::power::{list_batteries, BatteryInfo};
 use padproxy_core::presets::{export_profile_yaml, install_profile};
 use padproxy_core::profiles::{default_profile_dirs, load_profiles, Profile};
-use padproxy_core::remapper::{launch_with_remap, LaunchOptions, RemapOptions, RemapRuntime};
+use padproxy_core::remapper::{
+    launch_with_remap, LaunchOptions, RemapOptions, RemapRuntime, SlotRequest,
+};
 use padproxy_core::service::ServiceState;
 use padproxy_core::slots::{
     load_slot_store, save_slot_store, validate_slot, SlotStore, SLOT_COUNT,
@@ -599,7 +601,7 @@ fn clear_slot(controller: &str, slot: u8) -> Result<()> {
 fn apply_slot(controller: &str, slot: Option<u8>) -> Result<()> {
     let device = select_device(controller)?;
     let mut store = load_slot_store()?;
-    let selected_slot = match slot {
+    let mut current = match slot {
         Some(slot) => {
             validate_slot(slot)?;
             store.select_slot(&device.id, slot)?;
@@ -608,18 +610,73 @@ fn apply_slot(controller: &str, slot: Option<u8>) -> Result<()> {
         }
         None => store.selected_slot(&device.id),
     };
-    let profile_id = store
-        .profile_for_slot(&device.id, selected_slot)
-        .ok_or_else(|| anyhow!("slot {selected_slot} on {} is empty", device_label(&device)))?
-        .to_string();
-    let profile = find_profile(&profile_id)?;
 
-    eprintln!(
-        "Applying slot {selected_slot} on {} with profile {}",
-        device_label(&device),
-        profile.id
-    );
-    run_foreground_profile(profile, device.path)
+    // Run the selected slot's profile, restarting when a slot-switch command
+    // mapping fires, until a remap_off (or Ctrl-C) ends the session.
+    loop {
+        let profile_id = store
+            .profile_for_slot(&device.id, current)
+            .ok_or_else(|| anyhow!("slot {current} on {} is empty", device_label(&device)))?
+            .to_string();
+        let profile = find_profile(&profile_id)?;
+        eprintln!(
+            "Applying slot {current} on {} with profile {}",
+            device_label(&device),
+            profile.id
+        );
+
+        let mut runtime = RemapRuntime::start(RemapOptions {
+            profile,
+            source_device_path: device.path.clone(),
+        })?;
+        if !runtime.virtual_nodes().is_empty() {
+            eprintln!(
+                "PadProxy virtual pad: {}",
+                runtime.virtual_nodes().join(", ")
+            );
+        }
+        eprintln!("PadProxy remap is running. Press Ctrl-C to stop.");
+        while !runtime.stop_requested() {
+            runtime.pump_once()?;
+        }
+
+        match runtime.take_slot_request() {
+            Some(request) => {
+                drop(runtime);
+                current = next_slot(&store, &device.id, current, request);
+                store.select_slot(&device.id, current)?;
+                save_slot_store(&store)?;
+                eprintln!("Switched to slot {current}");
+            }
+            None => {
+                eprintln!("PadProxy remap turned off.");
+                return Ok(());
+            }
+        }
+    }
+}
+
+/// Compute the next slot for a slot-switch request, skipping empty slots for
+/// next/prev cycling.
+fn next_slot(store: &SlotStore, device_id: &str, current: u8, request: SlotRequest) -> u8 {
+    match request {
+        SlotRequest::Select(slot) if validate_slot(slot).is_ok() => slot,
+        SlotRequest::Select(_) => current,
+        SlotRequest::Next | SlotRequest::Prev => {
+            let forward = matches!(request, SlotRequest::Next);
+            for step in 1..=SLOT_COUNT {
+                let candidate = if forward {
+                    (current - 1 + step) % SLOT_COUNT + 1
+                } else {
+                    (current - 1 + SLOT_COUNT - step) % SLOT_COUNT + 1
+                };
+                if store.profile_for_slot(device_id, candidate).is_some() {
+                    return candidate;
+                }
+            }
+            current
+        }
+    }
 }
 
 fn print_device_slots(store: &SlotStore, device_id: &str, name: Option<&str>) {
