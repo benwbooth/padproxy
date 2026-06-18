@@ -1485,10 +1485,40 @@ fn source_supports_ff(source: &Device) -> bool {
 }
 
 fn create_virtual_pad(profile: &Profile, enable_ff: bool) -> Result<VirtualDevice> {
-    let descriptor = output_device(&profile.output_type).ok_or_else(|| {
+    let mut extra_keys = AttributeSet::<KeyCode>::new();
+    let mut extra_relative = AttributeSet::<RelativeAxisCode>::new();
+    for event in profile_output_events(profile) {
+        match event.kind {
+            EventKind::Key => {
+                extra_keys.insert(KeyCode(event.code));
+            }
+            EventKind::Relative => {
+                extra_relative.insert(RelativeAxisCode(event.code));
+            }
+            EventKind::Absolute => {}
+        }
+    }
+
+    build_virtual_gamepad(
+        &profile.output_type,
+        &extra_keys,
+        &extra_relative,
+        enable_ff,
+    )
+}
+
+/// Build a standard virtual Xbox-style gamepad for the given output type, with
+/// optional extra keyboard/mouse keys and relative axes and optional rumble.
+/// Shared by the remapper and the mobile-controller server.
+pub fn build_virtual_gamepad(
+    output_type: &str,
+    extra_keys: &AttributeSet<KeyCode>,
+    extra_relative: &AttributeSet<RelativeAxisCode>,
+    enable_ff: bool,
+) -> Result<VirtualDevice> {
+    let descriptor = output_device(output_type).ok_or_else(|| {
         anyhow!(
-            "unknown virtual output {}; supported outputs: {}",
-            profile.output_type,
+            "unknown virtual output {output_type}; supported outputs: {}",
             supported_output_ids().join(", ")
         )
     })?;
@@ -1511,17 +1541,8 @@ fn create_virtual_pad(profile: &Profile, enable_ff: bool) -> Result<VirtualDevic
     ] {
         keys.insert(key);
     }
-    let mut relative_axes = AttributeSet::<RelativeAxisCode>::new();
-    for event in profile_output_events(profile) {
-        match event.kind {
-            EventKind::Key => {
-                keys.insert(KeyCode(event.code));
-            }
-            EventKind::Relative => {
-                relative_axes.insert(RelativeAxisCode(event.code));
-            }
-            EventKind::Absolute => {}
-        }
+    for key in extra_keys.iter() {
+        keys.insert(key);
     }
 
     let mut builder = VirtualDevice::builder()?
@@ -1547,8 +1568,8 @@ fn create_virtual_pad(profile: &Profile, enable_ff: bool) -> Result<VirtualDevic
         builder = builder.with_absolute_axis(&setup)?;
     }
 
-    if relative_axes.iter().next().is_some() {
-        builder = builder.with_relative_axes(&relative_axes)?;
+    if extra_relative.iter().next().is_some() {
+        builder = builder.with_relative_axes(extra_relative)?;
     }
 
     if enable_ff {

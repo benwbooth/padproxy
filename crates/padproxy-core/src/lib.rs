@@ -7,6 +7,7 @@ pub mod event_code;
 pub mod leds;
 pub mod linux;
 pub mod logging;
+pub mod mobile;
 pub mod outputs;
 pub mod power;
 pub mod presets;

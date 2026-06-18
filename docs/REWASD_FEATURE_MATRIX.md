@@ -184,7 +184,10 @@ Joy-Cons) are tracked separately under Sensors/Grouping.
 - Keyboard and mouse devices with initialization/detection mode. Basic Linux
   evdev keyboard/mouse discovery done; richer initialization/detection flow
   remains.
-- Mobile controller from Android/iOS.
+- Mobile controller from Android/iOS. Basic mobile controller done:
+  `padproxyctl mobile-server` listens on UDP for JSON controller-state packets
+  (`{"buttons":{...},"axes":{...}}`) and drives a virtual gamepad, so a phone
+  app can act as a controller.
 
 ## Device Grouping
 

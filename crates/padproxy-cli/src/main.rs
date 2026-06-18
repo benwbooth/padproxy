@@ -50,6 +50,12 @@ enum Command {
         #[arg(long)]
         controller: String,
     },
+    MobileServer {
+        #[arg(long, default_value_t = 9999)]
+        port: u16,
+        #[arg(long, default_value = "xbox360")]
+        output: String,
+    },
     Detect,
     Watch {
         #[arg(long)]
@@ -220,6 +226,7 @@ fn main() -> Result<()> {
             eprintln!("Powered off {}", device_label(&device));
             Ok(())
         }
+        Command::MobileServer { port, output } => mobile_server(port, &output),
         Command::Detect => {
             let profiles = load_profiles(&default_profile_dirs())?;
             match detect_profile(&profiles) {
@@ -311,6 +318,10 @@ fn resolve_launch_profile(profile: Option<&str>, command: &[String]) -> Result<P
             "no profile's process patterns matched {program}; pass --profile to choose one"
         )),
     }
+}
+
+fn mobile_server(port: u16, output: &str) -> Result<()> {
+    padproxy_core::mobile::run_server(port, output)
 }
 
 fn set_led(led: &str, brightness: Option<u32>, color: Option<&str>) -> Result<()> {

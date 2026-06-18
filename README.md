@@ -101,6 +101,17 @@ nix develop --command cargo run --bin padproxyctl -- power-off \
   --controller 'Wireless Controller'
 ```
 
+Use a phone as a controller: run the mobile server and have an app send JSON
+state packets over UDP (`{"buttons":{"a":true},"axes":{"lx":0.5,"rt":1.0}}`):
+
+```sh
+nix develop --command cargo run --bin padproxyctl -- mobile-server --port 9999
+```
+
+Button names are `a b x y lb rb back start guide ls rs` plus d-pad `up down
+left right`; stick axes (`lx ly rx ry`) use -1.0..1.0 and triggers (`lt rt`)
+use 0.0..1.0.
+
 Detect which profile matches a running game/app:
 
 ```sh
