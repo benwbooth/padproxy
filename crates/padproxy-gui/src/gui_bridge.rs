@@ -56,11 +56,8 @@ use core::pin::Pin;
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::QString;
 use padproxy_core::capture::CaptureReader;
-use padproxy_core::remapper::{RemapOptions, RemapRuntime};
+use padproxy_core::session::{RemapMessage, RemapSession};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc};
-use std::thread::JoinHandle;
 
 pub fn init_qt_static_modules() {
     cxx_qt::init_crate!(cxx_qt);
@@ -82,28 +79,7 @@ pub struct PadProxyControllerRust {
     remap_active: bool,
     capture_device_path: String,
     capture_reader: Option<CaptureReader>,
-    remap_session: Option<GuiRemapSession>,
-}
-
-struct GuiRemapSession {
-    stop: Arc<AtomicBool>,
-    receiver: mpsc::Receiver<RemapMessage>,
-    thread: Option<JoinHandle<()>>,
-}
-
-enum RemapMessage {
-    Running(Vec<String>),
-    Stopped,
-    Failed(String),
-}
-
-impl Drop for GuiRemapSession {
-    fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
-    }
+    remap_session: Option<RemapSession>,
 }
 
 impl qobject::PadProxyController {
@@ -270,40 +246,11 @@ mappings:\n\
             }
         };
 
-        let stop = Arc::new(AtomicBool::new(false));
-        let worker_stop = Arc::clone(&stop);
-        let (sender, receiver) = mpsc::channel();
-        let worker_path = path.clone();
-        let thread = std::thread::spawn(move || {
-            let runtime = RemapRuntime::start(RemapOptions {
-                profile,
-                source_device_path: worker_path,
-            });
-            let mut runtime = match runtime {
-                Ok(runtime) => runtime,
-                Err(error) => {
-                    let _ = sender.send(RemapMessage::Failed(error.to_string()));
-                    return;
-                }
-            };
-
-            let _ = sender.send(RemapMessage::Running(runtime.virtual_nodes().to_vec()));
-            while !worker_stop.load(Ordering::Relaxed) {
-                if let Err(error) = runtime.pump_once() {
-                    let _ = sender.send(RemapMessage::Failed(error.to_string()));
-                    return;
-                }
-            }
-            let _ = sender.send(RemapMessage::Stopped);
-        });
+        let session = RemapSession::start(profile, path.clone());
 
         {
             let mut rust = this.as_mut().rust_mut();
-            rust.remap_session = Some(GuiRemapSession {
-                stop,
-                receiver,
-                thread: Some(thread),
-            });
+            rust.remap_session = Some(session);
         }
         this.as_mut().set_remap_active(true);
         this.as_mut().set_remap_status(QString::from(format!(
@@ -328,17 +275,9 @@ mappings:\n\
         {
             let mut rust = this.as_mut().rust_mut();
             if let Some(session) = rust.remap_session.as_mut() {
-                loop {
-                    match session.receiver.try_recv() {
-                        Ok(message) => messages.push(message),
-                        Err(mpsc::TryRecvError::Empty) => break,
-                        Err(mpsc::TryRecvError::Disconnected) => {
-                            messages.push(RemapMessage::Failed(
-                                "Remap worker disconnected".to_string(),
-                            ));
-                            break;
-                        }
-                    }
+                messages = session.poll();
+                if messages.is_empty() && session.is_finished() {
+                    should_finish = true;
                 }
             }
         }
@@ -400,23 +339,14 @@ fn stop_remap_session(mut controller: Pin<&mut qobject::PadProxyController>) {
         rust.remap_session.take()
     };
     if let Some(mut session) = session {
-        session.stop.store(true, Ordering::Relaxed);
-        if let Some(thread) = session.thread.take() {
-            let _ = thread.join();
-        }
+        session.stop();
     }
 }
 
 fn finish_remap_session(mut controller: Pin<&mut qobject::PadProxyController>) {
-    let session = {
-        let mut rust = controller.as_mut().rust_mut();
-        rust.remap_session.take()
-    };
-    if let Some(mut session) = session {
-        if let Some(thread) = session.thread.take() {
-            let _ = thread.join();
-        }
-    }
+    // Dropping the session joins its worker thread.
+    let mut rust = controller.as_mut().rust_mut();
+    rust.remap_session.take();
 }
 
 fn refresh_into(mut controller: Pin<&mut qobject::PadProxyController>) {
