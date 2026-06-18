@@ -1376,6 +1376,7 @@ dependencies = [
  "clap",
  "evdev",
  "padproxy-core",
+ "rscam",
  "serde",
  "serde_json",
  "tokio",
@@ -1537,6 +1538,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47b34b781b31e5d73e9fbc8689c70551fd1ade9a19e3e28cfec8580a79290cc4"
 dependencies = [
  "bytemuck",
+]
+
+[[package]]
+name = "rscam"
+version = "0.5.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "89056084211cd54924fedf2e2199b906409d1f795cfd8e7e3271061742457018"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
@@ -1756,7 +1766,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys",

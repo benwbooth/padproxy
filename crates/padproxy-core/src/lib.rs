@@ -18,3 +18,4 @@ pub mod remapper;
 pub mod service;
 pub mod session;
 pub mod slots;
+pub mod vision;

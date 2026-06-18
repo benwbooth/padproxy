@@ -26,6 +26,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod bt_emulate;
 mod dbus;
+mod discover_cam;
 
 #[derive(Debug, Parser)]
 #[command(author, version, about)]
@@ -70,6 +71,14 @@ enum Command {
     BtEmulate {
         #[arg(long)]
         controller: String,
+    },
+    DiscoverCam {
+        #[arg(long)]
+        controller: String,
+        #[arg(long, default_value = "/dev/video0")]
+        camera: String,
+        #[arg(long, default_value = "controller-layout.json")]
+        output: PathBuf,
     },
     Detect,
     Resolve {
@@ -258,6 +267,14 @@ fn main() -> Result<()> {
         Command::BtEmulate { controller } => {
             let path = resolve_device_path(&controller)?;
             bt_emulate::run(&path)
+        }
+        Command::DiscoverCam {
+            controller,
+            camera,
+            output,
+        } => {
+            let path = resolve_device_path(&controller)?;
+            discover_cam::run(&path, &camera, output)
         }
         Command::Resolve { profile } => {
             let profile = find_profile(&profile)?;

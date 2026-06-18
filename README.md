@@ -270,6 +270,24 @@ nix develop --command cargo run --bin padproxyctl -- launch \
   -- retroarch -L /path/to/core.so /path/to/game.nes
 ```
 
+## Webcam button discovery (experimental)
+
+Point a webcam at a controller and press each button once; PadProxy locates
+where each button is by correlating the press event with the visual change in
+the frame (the finger/button moving against a resting baseline). It writes a
+per-controller layout (`code -> normalized x/y`) you can use for a custom
+diagram:
+
+```sh
+nix develop --command cargo run --bin padproxyctl -- discover-cam \
+  --controller /dev/input/event259 \
+  --camera /dev/video0 \
+  --output my-pad-layout.json
+```
+
+It needs a `640x480 YUYV` webcam. Localization is finger-based, so press buttons
+distinctly; the strongest localization per button is kept and saved as you go.
+
 ## Adaptive controller scenarios
 
 A profile can adapt to whatever controllers are connected. `match:` accepts a

@@ -76,6 +76,7 @@
           buildInputs = [
             pkgs.libevdev
             pkgs.libglvnd
+            pkgs.v4l-utils
             pkgs.qt6.qtbase
             pkgs.qt6.qtdeclarative
             pkgs.qt6.qtsvg
@@ -133,6 +134,7 @@
             pkgs.pkg-config
             pkgs.libevdev
             pkgs.libglvnd
+            pkgs.v4l-utils
             pkgs.qt6.qtmultimedia
             qmakeForCxxQt
             qtEnv
