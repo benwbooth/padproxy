@@ -31,6 +31,10 @@ ApplicationWindow {
     // Whether section "?" hints and inline help are shown.
     property bool helpMode: false
 
+    // When false, the editor hides profile metadata and advanced tuning and
+    // shows only the core task: the controller diagram and its mappings.
+    property bool showAdvanced: false
+
     // Comprehensive in-app help: one entry per feature/area. Drives the Help
     // drawer; the same text is reused for tooltips and section hints.
     readonly property var helpSections: [
@@ -1903,6 +1907,42 @@ ApplicationWindow {
         }
     }
 
+    // ---- Name-this-profile dialog (shown on Save when unnamed) ----------
+    Dialog {
+        id: nameDialog
+        title: "Save this setup"
+        modal: true
+        anchors.centerIn: Overlay.overlay
+        width: 380
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        Material.background: root.colSurface
+
+        onAboutToShow: nameField.text = profileIdField.text
+        onAccepted: {
+            if (nameField.text.trim().length > 0) {
+                profileIdField.text = nameField.text.trim()
+                root.saveCurrentEditor()
+            }
+        }
+
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 8
+            Label {
+                text: "Give this controller setup a name so you can find it later:"
+                color: root.colText
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+            }
+            TextField {
+                id: nameField
+                placeholderText: "e.g. My Game Layout"
+                Layout.fillWidth: true
+                onAccepted: nameDialog.accept()
+            }
+        }
+    }
+
     // ---- Guided tour (modal walkthrough) --------------------------------
     Popup {
         id: tour
@@ -2161,11 +2201,19 @@ ApplicationWindow {
                     Button {
                         text: "Save"
                         enabled: editorTabs.currentIndex === 0
-                            ? profileIdField.text.trim().length > 0
+                            ? true
                             : profileEditor.text.length > 0
-                        onClicked: root.saveCurrentEditor()
+                        onClicked: {
+                            // On the visual tab, ask for a name if there isn't one
+                            // yet (the name field lives under Advanced).
+                            if (editorTabs.currentIndex === 0
+                                    && profileIdField.text.trim().length === 0)
+                                nameDialog.open()
+                            else
+                                root.saveCurrentEditor()
+                        }
                         ToolTip.visible: hovered
-                        ToolTip.text: "Write this profile to disk so you can reuse it later."
+                        ToolTip.text: "Write this setup to disk so you can reuse it later."
                     }
                 }
 
@@ -2213,11 +2261,56 @@ ApplicationWindow {
                             width: parent.availableWidth
                             spacing: 10
 
+                            // Plain-language guide to what this editor is for.
+                            Rectangle {
+                                Layout.fillWidth: true
+                                color: root.colSurfaceAlt
+                                radius: root.radius
+                                implicitHeight: howToCol.implicitHeight + 24
+
+                                ColumnLayout {
+                                    id: howToCol
+                                    anchors.fill: parent
+                                    anchors.margins: 14
+                                    spacing: 6
+
+                                    Label {
+                                        text: "How to remap your controller"
+                                        font.pixelSize: 16
+                                        font.bold: true
+                                        color: root.colAccent
+                                    }
+                                    Label {
+                                        Layout.fillWidth: true
+                                        wrapMode: Text.WordWrap
+                                        color: root.colText
+                                        text: "1.  Pick your controller in the left panel.\n"
+                                            + "2.  In the diagram below, click the button you want to change, "
+                                            + "choose Source, then click it again (or another control) as Target "
+                                            + "to set what it becomes.\n"
+                                            + "3.  Press Apply (top right) to use it now, or Save to keep it.\n\n"
+                                            + "That's the whole job. Everything else — names, output type, layers, "
+                                            + "analog tuning — is optional; open 'Advanced options' only if you need it."
+                                    }
+                                }
+                            }
+
+                            // Toggle that reveals profile metadata + advanced tuning.
+                            Switch {
+                                text: "Advanced options"
+                                checked: root.showAdvanced
+                                onToggled: root.showAdvanced = checked
+                                ToolTip.visible: hovered
+                                ToolTip.text: "Show profile name/details, output type, layers, and analog tuning. "
+                                    + "Most people don't need these."
+                            }
+
                             GridLayout {
                                 columns: 2
                                 columnSpacing: 10
                                 rowSpacing: 8
                                 Layout.fillWidth: true
+                                visible: root.showAdvanced
 
                                 Label { text: "ID" }
                                 TextField {
@@ -2289,6 +2382,7 @@ ApplicationWindow {
                             }
 
                             Frame {
+                                visible: root.showAdvanced
                                 Layout.fillWidth: true
 
                                 ColumnLayout {
@@ -2403,6 +2497,7 @@ ApplicationWindow {
                             }
 
                             Frame {
+                                visible: root.showAdvanced
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: Math.max(190, analogModel.count * 116 + 56)
 
@@ -2587,6 +2682,7 @@ ApplicationWindow {
                             }
 
                             Frame {
+                                visible: root.showAdvanced
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: Math.max(150, stickTransformsModel.count * 54 + 92)
 
@@ -2676,6 +2772,7 @@ ApplicationWindow {
                             }
 
                             Frame {
+                                visible: root.showAdvanced
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: Math.max(150, analogZonesModel.count * 54 + 58)
 
@@ -2799,6 +2896,7 @@ ApplicationWindow {
                             }
 
                             Frame {
+                                visible: root.showAdvanced
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: Math.max(140, digitalSticksModel.count * 54 + 58)
 
