@@ -98,7 +98,27 @@ ApplicationWindow {
         "abs:z",
         "abs:rz",
         "abs:hat0x",
-        "abs:hat0y"
+        "abs:hat0y",
+        "key:space",
+        "key:enter",
+        "key:escape",
+        "key:tab",
+        "key:backspace",
+        "key:up",
+        "key:down",
+        "key:left",
+        "key:right",
+        "key:a",
+        "key:s",
+        "key:d",
+        "key:w",
+        "key:x",
+        "key:z",
+        "mouse:left",
+        "mouse:right",
+        "mouse:middle",
+        "mouse:back",
+        "mouse:forward"
     ]
     property var analogAxisCodes: [
         "abs:x",
@@ -124,6 +144,41 @@ ApplicationWindow {
         "btn:mode",
         "btn:thumbl",
         "btn:thumbr"
+    ]
+    property var keyEventCodes: [
+        "btn:south",
+        "btn:east",
+        "btn:west",
+        "btn:north",
+        "btn:tl",
+        "btn:tr",
+        "btn:tl2",
+        "btn:tr2",
+        "btn:select",
+        "btn:start",
+        "btn:mode",
+        "btn:thumbl",
+        "btn:thumbr",
+        "key:space",
+        "key:enter",
+        "key:escape",
+        "key:tab",
+        "key:backspace",
+        "key:up",
+        "key:down",
+        "key:left",
+        "key:right",
+        "key:a",
+        "key:s",
+        "key:d",
+        "key:w",
+        "key:x",
+        "key:z",
+        "mouse:left",
+        "mouse:right",
+        "mouse:middle",
+        "mouse:back",
+        "mouse:forward"
     ]
     property var controllerTemplates: [
         {
@@ -672,6 +727,26 @@ ApplicationWindow {
         case "abs:rz": return "Right trigger axis"
         case "abs:hat0x": return "D-pad X"
         case "abs:hat0y": return "D-pad Y"
+        case "key:space": return "Keyboard Space"
+        case "key:enter": return "Keyboard Enter"
+        case "key:escape": return "Keyboard Escape"
+        case "key:tab": return "Keyboard Tab"
+        case "key:backspace": return "Keyboard Backspace"
+        case "key:up": return "Keyboard Up"
+        case "key:down": return "Keyboard Down"
+        case "key:left": return "Keyboard Left"
+        case "key:right": return "Keyboard Right"
+        case "key:a": return "Keyboard A"
+        case "key:s": return "Keyboard S"
+        case "key:d": return "Keyboard D"
+        case "key:w": return "Keyboard W"
+        case "key:x": return "Keyboard X"
+        case "key:z": return "Keyboard Z"
+        case "mouse:left": return "Mouse Left"
+        case "mouse:right": return "Mouse Right"
+        case "mouse:middle": return "Mouse Middle"
+        case "mouse:back": return "Mouse Back"
+        case "mouse:forward": return "Mouse Forward"
         default: return code
         }
     }
@@ -713,7 +788,7 @@ ApplicationWindow {
         root.ensureMappingSelection(code)
         const propertyName = root.selectedMappingSide === "to" ? "toCode" : "fromCode"
         mappingsModel.setProperty(root.selectedMappingIndex, propertyName, code)
-        if (propertyName === "fromCode" && root.buttonEventCodes.indexOf(code) < 0)
+        if (propertyName === "fromCode" && root.keyEventCodes.indexOf(code) < 0)
             mappingsModel.setProperty(root.selectedMappingIndex, "activatorKind", "press")
     }
 
@@ -1687,7 +1762,7 @@ ApplicationWindow {
                                                     root.selectedMappingIndex = index
                                                     root.selectedMappingSide = "from"
                                                     mappingsModel.setProperty(index, "fromCode", currentText)
-                                                    if (root.buttonEventCodes.indexOf(currentText) < 0)
+                                                    if (root.keyEventCodes.indexOf(currentText) < 0)
                                                         mappingsModel.setProperty(index, "activatorKind", "press")
                                                 }
                                                 ToolTip.visible: hovered
@@ -1712,7 +1787,7 @@ ApplicationWindow {
                                                             || nextAction === "command")
                                                         mappingsModel.setProperty(index, "turboEnabled", false)
                                                     if (nextAction === "macro"
-                                                            && root.buttonEventCodes.indexOf(toCode) < 0)
+                                                            && root.keyEventCodes.indexOf(toCode) < 0)
                                                         mappingsModel.setProperty(index, "toCode", "btn:south")
                                                     if (nextAction === "macro" && !macroMode)
                                                         mappingsModel.setProperty(index, "macroMode", "press")
@@ -1727,7 +1802,7 @@ ApplicationWindow {
                                                 model: root.mappingActivatorOptions
                                                 textRole: "label"
                                                 currentIndex: root.mappingActivatorIndex(activatorKind)
-                                                enabled: root.buttonEventCodes.indexOf(fromCode) >= 0
+                                                enabled: root.keyEventCodes.indexOf(fromCode) >= 0
                                                 opacity: enabled ? 1.0 : 0.35
                                                 Layout.preferredWidth: 112
                                                 onPressedChanged: {
@@ -1756,7 +1831,7 @@ ApplicationWindow {
 
                                             ComboBox {
                                                 readonly property var targetCodes: action === "macro"
-                                                    ? root.buttonEventCodes
+                                                    ? root.keyEventCodes
                                                     : root.eventCodes
                                                 model: targetCodes
                                                 currentIndex: Math.max(0, targetCodes.indexOf(toCode))

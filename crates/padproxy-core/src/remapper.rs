@@ -1,4 +1,4 @@
-use crate::event_code::{event_from_input, virtual_xbox_supports, EventCode, EventKind};
+use crate::event_code::{event_from_input, virtual_output_supports, EventCode, EventKind};
 use crate::outputs::{output_device, supported_output_ids};
 use crate::profiles::{
     ActivatorKind, ActivatorSettings, AnalogTuning, CommandAction, CommandSettings,
@@ -9,7 +9,7 @@ use anyhow::{anyhow, Context, Result};
 use evdev::uinput::VirtualDevice;
 use evdev::{
     AbsInfo, AbsoluteAxisCode, AttributeSet, BusType, Device, EventType, InputEvent, InputId,
-    KeyCode, UinputAbsSetup,
+    KeyCode, RelativeAxisCode, UinputAbsSetup,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::process::Command;
@@ -151,7 +151,8 @@ impl RemapRuntime {
             .set_nonblocking(true)
             .context("failed to make source device nonblocking")?;
 
-        let mut virtual_pad = create_virtual_xbox_pad().context("failed to create virtual pad")?;
+        let mut virtual_pad =
+            create_virtual_xbox_pad(&options.profile).context("failed to create virtual pad")?;
         let virtual_nodes = virtual_pad
             .enumerate_dev_nodes_blocking()
             .ok()
@@ -287,10 +288,10 @@ impl RemapRuntime {
         value: i32,
         output: &mut Vec<InputEvent>,
     ) {
-        if source_event.kind == EventKind::Key {
-            self.push_mapped_key_event(source_event, value, output);
-        } else {
-            self.push_mapped_absolute_event(source_event, value, output);
+        match source_event.kind {
+            EventKind::Key => self.push_mapped_key_event(source_event, value, output),
+            EventKind::Absolute => self.push_mapped_absolute_event(source_event, value, output),
+            EventKind::Relative => {}
         }
     }
 
@@ -321,7 +322,7 @@ impl RemapRuntime {
             let Some(target_event) = self.pressed_key_targets.remove(&source_event) else {
                 if resolved.action == MappingAction::Map
                     && (self.profile.passthrough || resolved.mapped)
-                    && virtual_xbox_supports(resolved.target)
+                    && virtual_output_supports(resolved.target)
                 {
                     push_input_event(output, resolved.target, 0);
                 }
@@ -376,7 +377,7 @@ impl RemapRuntime {
 
         if resolved.action != MappingAction::Map
             || (!self.profile.passthrough && !resolved.mapped)
-            || !virtual_xbox_supports(resolved.target)
+            || !virtual_output_supports(resolved.target)
         {
             return;
         }
@@ -503,7 +504,7 @@ impl RemapRuntime {
             MappingAction::Disable => {}
             MappingAction::Map => {
                 if (!self.profile.passthrough && !resolved.mapped)
-                    || !virtual_xbox_supports(resolved.target)
+                    || !virtual_output_supports(resolved.target)
                 {
                     return;
                 }
@@ -524,7 +525,7 @@ impl RemapRuntime {
         let resolved = self.resolved_mapping(source_event);
         if resolved.action != MappingAction::Map
             || (!self.profile.passthrough && !resolved.mapped)
-            || !virtual_xbox_supports(resolved.target)
+            || !virtual_output_supports(resolved.target)
         {
             return;
         }
@@ -558,7 +559,10 @@ impl RemapRuntime {
                         });
                     }
                 }
-                MacroEventKind::Down | MacroEventKind::Up | MacroEventKind::Axis => {
+                MacroEventKind::Down
+                | MacroEventKind::Up
+                | MacroEventKind::Axis
+                | MacroEventKind::Relative => {
                     if let Some(code) = event.code {
                         self.queue_macro_event(ScheduledMacroEvent {
                             due: now + offset,
@@ -672,6 +676,7 @@ impl RemapRuntime {
                     self.macro_output_axes.insert(event, value);
                 }
             }
+            EventKind::Relative => {}
         }
     }
 
@@ -743,7 +748,7 @@ fn push_input_event(output: &mut Vec<InputEvent>, event: EventCode, value: i32) 
     output.push(InputEvent::new(event.event_type().0, event.code, value));
 }
 
-fn create_virtual_xbox_pad() -> Result<VirtualDevice> {
+fn create_virtual_xbox_pad(profile: &Profile) -> Result<VirtualDevice> {
     let mut keys = AttributeSet::<KeyCode>::new();
     for key in [
         KeyCode::BTN_SOUTH,
@@ -761,6 +766,18 @@ fn create_virtual_xbox_pad() -> Result<VirtualDevice> {
         KeyCode::BTN_THUMBR,
     ] {
         keys.insert(key);
+    }
+    let mut relative_axes = AttributeSet::<RelativeAxisCode>::new();
+    for event in profile_output_events(profile) {
+        match event.kind {
+            EventKind::Key => {
+                keys.insert(KeyCode(event.code));
+            }
+            EventKind::Relative => {
+                relative_axes.insert(RelativeAxisCode(event.code));
+            }
+            EventKind::Absolute => {}
+        }
     }
 
     let mut builder = VirtualDevice::builder()?
@@ -781,9 +798,39 @@ fn create_virtual_xbox_pad() -> Result<VirtualDevice> {
         builder = builder.with_absolute_axis(&setup)?;
     }
 
+    if relative_axes.iter().next().is_some() {
+        builder = builder.with_relative_axes(&relative_axes)?;
+    }
+
     builder.build().map_err(Into::into)
 }
 
 fn axis(code: AbsoluteAxisCode, min: i32, max: i32, flat: i32) -> UinputAbsSetup {
     UinputAbsSetup::new(code, AbsInfo::new(0, min, max, 0, flat, 0))
+}
+
+fn profile_output_events(profile: &Profile) -> HashSet<EventCode> {
+    let mut events = HashSet::new();
+    for layer in &profile.layers {
+        for mapping in &layer.mappings {
+            match mapping.action {
+                MappingAction::Map => {
+                    events.insert(mapping.to);
+                }
+                MappingAction::Macro => {
+                    if let Some(macro_settings) = &mapping.macro_settings {
+                        events.extend(macro_settings.events.iter().filter_map(|event| event.code));
+                        events.extend(
+                            macro_settings
+                                .release_events
+                                .iter()
+                                .filter_map(|event| event.code),
+                        );
+                    }
+                }
+                MappingAction::Disable | MappingAction::Command => {}
+            }
+        }
+    }
+    events
 }

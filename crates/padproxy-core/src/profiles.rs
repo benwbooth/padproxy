@@ -1,5 +1,7 @@
 use crate::devices::DeviceInfo;
-use crate::event_code::{parse_event_code, virtual_xbox_supports, EventCode, EventKind};
+use crate::event_code::{
+    parse_event_code, virtual_output_supports, virtual_xbox_supports, EventCode, EventKind,
+};
 use crate::outputs::normalize_output_type;
 use anyhow::{anyhow, Context, Result};
 use serde::de::{self, Visitor};
@@ -120,6 +122,7 @@ pub enum MacroEventKind {
     Up,
     Tap,
     Axis,
+    Relative,
     Pause,
 }
 
@@ -259,6 +262,7 @@ struct RawMacroEvent {
     up: Option<String>,
     tap: Option<String>,
     axis: Option<String>,
+    rel: Option<String>,
     value: Option<i32>,
     pause_ms: Option<u64>,
 }
@@ -774,9 +778,15 @@ fn parse_mappings(mappings: Option<Vec<RawMapping>>, context: &str) -> Result<Ve
                 })?;
                 let to = parse_event_code(to)
                     .ok_or_else(|| anyhow!("unknown target event {to} in {context}"))?;
-                if !virtual_xbox_supports(to) {
+                if !virtual_output_supports(to) {
                     return Err(anyhow!(
-                        "target event {} in {context} is not supported by the current virtual pad",
+                        "target event {} in {context} is not supported by the current virtual output",
+                        to.name()
+                    ));
+                }
+                if to.kind == EventKind::Relative {
+                    return Err(anyhow!(
+                        "relative target event {} in {context} requires a macro event with value",
                         to.name()
                     ));
                 }
@@ -1114,7 +1124,7 @@ fn automatic_hold_release_events(events: &[MacroEvent]) -> Vec<MacroEvent> {
                 }
                 axis_values.insert(code, event.value);
             }
-            MacroEventKind::Tap | MacroEventKind::Pause => {}
+            MacroEventKind::Tap | MacroEventKind::Relative | MacroEventKind::Pause => {}
         }
     }
 
@@ -1157,6 +1167,7 @@ fn parse_macro_event(
         raw.up.is_some(),
         raw.tap.is_some(),
         raw.axis.is_some(),
+        raw.rel.is_some(),
         raw.pause_ms.is_some(),
     ]
     .into_iter()
@@ -1165,7 +1176,7 @@ fn parse_macro_event(
 
     if specified != 1 {
         return Err(anyhow!(
-            "macro event {} from {from_name} in {context} must set exactly one of down, up, tap, axis, or pause_ms",
+            "macro event {} from {from_name} in {context} must set exactly one of down, up, tap, axis, rel, or pause_ms",
             index + 1
         ));
     }
@@ -1219,6 +1230,29 @@ fn parse_macro_event(
         });
     }
 
+    if let Some(code) = raw.rel {
+        let code = parse_macro_target(&code, MacroEventKind::Relative, index, from_name, context)?;
+        let value = raw.value.ok_or_else(|| {
+            anyhow!(
+                "macro relative event {} from {from_name} in {context} requires value",
+                index + 1
+            )
+        })?;
+        if !(-32768..=32767).contains(&value) {
+            return Err(anyhow!(
+                "macro relative value for event {} from {from_name} in {context} must stay within -32768..32767",
+                index + 1
+            ));
+        }
+        return Ok(MacroEvent {
+            kind: MacroEventKind::Relative,
+            code: Some(code),
+            code_name: code.name(),
+            value,
+            pause_ms: 0,
+        });
+    }
+
     let code = raw
         .axis
         .expect("specified count guarantees axis is present when no other event matched");
@@ -1266,9 +1300,9 @@ fn parse_macro_target(
             index + 1
         )
     })?;
-    if !virtual_xbox_supports(code) {
+    if !virtual_output_supports(code) {
         return Err(anyhow!(
-            "macro target event {} for event {} from {from_name} in {context} is not supported by the current virtual pad",
+            "macro target event {} for event {} from {from_name} in {context} is not supported by the current virtual output",
             code.name(),
             index + 1
         ));
@@ -1285,6 +1319,10 @@ fn parse_macro_target(
         }
         MacroEventKind::Axis if code.kind != EventKind::Absolute => Err(anyhow!(
             "macro axis event {} from {from_name} in {context} must target an absolute axis",
+            index + 1
+        )),
+        MacroEventKind::Relative if code.kind != EventKind::Relative => Err(anyhow!(
+            "macro relative event {} from {from_name} in {context} must target a relative axis",
             index + 1
         )),
         _ => Ok(code),
@@ -1778,6 +1816,56 @@ mappings:
             profile.mappings[1].command.as_ref().unwrap().action,
             CommandAction::StopMacros
         );
+    }
+
+    #[test]
+    fn parses_keyboard_mouse_mapping_targets_and_relative_macros() {
+        let profile = parse_profile_bytes(
+            br#"
+id: keyboard-mouse
+mappings:
+  - from: btn:south
+    to: key:space
+  - from: btn:east
+    to: mouse:left
+  - from: btn:start
+    action: macro
+    macro:
+      events:
+        - tap: key:enter
+        - tap: mouse:right
+        - rel: rel:wheel
+          value: -1
+"#,
+            Path::new("keyboard-mouse.yaml"),
+        )
+        .unwrap();
+
+        assert_eq!(profile.mappings[0].to_name, "key:space");
+        assert_eq!(profile.mappings[1].to_name, "mouse:left");
+        let macro_settings = profile.mappings[2].macro_settings.as_ref().unwrap();
+        assert_eq!(macro_settings.events[0].code_name, "key:enter");
+        assert_eq!(macro_settings.events[1].code_name, "mouse:right");
+        assert_eq!(macro_settings.events[2].kind, MacroEventKind::Relative);
+        assert_eq!(macro_settings.events[2].code_name, "rel:wheel");
+        assert_eq!(macro_settings.events[2].value, -1);
+    }
+
+    #[test]
+    fn rejects_relative_direct_mapping_targets() {
+        let error = parse_profile_bytes(
+            br#"
+id: relative-target
+mappings:
+  - from: btn:south
+    to: rel:x
+"#,
+            Path::new("relative-target.yaml"),
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("requires a macro event"), "{error}");
     }
 
     #[test]

@@ -42,8 +42,10 @@ Source pages consulted:
 ## Mapping Types
 
 - Controller to controller mappings. Basic button/axis remap done.
-- Controller to keyboard mappings.
-- Controller to mouse mappings.
+- Controller to keyboard mappings. Basic controller-button to keyboard-key
+  mappings done.
+- Controller to mouse mappings. Basic controller-button to mouse-button
+  mappings done; relative mouse-axis output is available in YAML macros.
 - Keyboard to controller mappings.
 - Mouse to controller mappings.
 - Native/hardware mappings that do not create an emulated device.
@@ -71,8 +73,10 @@ Source pages consulted:
 ## Combos / Macros
 
 - Keyboard, mouse, and controller macro events. Basic controller button/axis
-  macro events done.
-- Explicit down/up events. Done for controller button macro events.
+  macro events done; keyboard and mouse-button macro taps/down/up and relative
+  mouse-axis macro events are done.
+- Explicit down/up events. Done for controller, keyboard, and mouse-button
+  macro events.
 - Pauses. Done for controller macros.
 - Rumble events.
 - Break/cancel events.
@@ -116,8 +120,10 @@ Source pages consulted:
 - Virtual DualShock 4.
 - Virtual DualSense.
 - Virtual Switch Pro.
-- Keyboard output.
-- Mouse output.
+- Keyboard output. Basic keyboard-key capabilities are added to the Linux
+  uinput virtual device when profile mappings or macros target them.
+- Mouse output. Basic mouse-button and relative-axis capabilities are added to
+  the Linux uinput virtual device when profile mappings or macros target them.
 - Multiple virtual devices from one profile.
 - External controller emulation over Bluetooth.
 - GIMX-style wired external output.
@@ -185,6 +191,6 @@ Source pages consulted:
 3. Add hook mode to pick source and target controls by pressing buttons. Done.
 4. Add remap ON/OFF/apply lifecycle from the GUI. Done.
 5. Add virtual output type selection and hide/grab policy controls. Done for implemented outputs; planned outputs are visible but disabled until their virtual-device backends exist.
-6. Add layers, then activators, then macros. Basic main/shift layers are done with hold/toggle activation, disable mappings, held-button turbo, press/release/long/double/triple controller activators, press-triggered controller macros, and hold-until-release controller macros; richer activators and macros remain.
+6. Add layers, then activators, then macros. Basic main/shift layers are done with hold/toggle activation, disable mappings, held-button turbo, press/release/long/double/triple controller activators, press-triggered controller/keyboard/mouse-button macros, relative mouse macro events, and hold-until-release controller macros; richer activators and macros remain.
 7. Add analog tuning. Basic per-axis deadzone, sensitivity, inversion, and output range are done.
 8. Add process autodetect and Lunchbox integration.
