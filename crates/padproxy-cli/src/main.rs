@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
+use padproxy_core::autodetect::detect_profile;
 use padproxy_core::devices::DeviceInfo;
 use padproxy_core::linux::{list_devices, resolve_device};
 use padproxy_core::outputs::output_devices;
@@ -27,6 +28,7 @@ enum Command {
     ListOutputs,
     ListProfiles,
     ListBatteries,
+    Detect,
     ListSlots {
         #[arg(long)]
         controller: Option<String>,
@@ -124,6 +126,19 @@ fn main() -> Result<()> {
                 );
             }
             Ok(())
+        }
+        Command::Detect => {
+            let profiles = load_profiles(&default_profile_dirs())?;
+            match detect_profile(&profiles) {
+                Some((profile, detail)) => {
+                    println!("{}\t{}\t{}", profile.id, profile.name, detail.process_name);
+                    Ok(())
+                }
+                None => {
+                    eprintln!("No profile matched a running process.");
+                    std::process::exit(1);
+                }
+            }
         }
         Command::ListBatteries => {
             let batteries = list_batteries();

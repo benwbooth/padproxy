@@ -68,6 +68,25 @@ nix develop --command cargo run --bin padproxyctl -- list-batteries
 present/online state for wireless controllers and other peripherals that expose
 a Linux `power_supply` node.
 
+Detect which profile matches a running game/app:
+
+```sh
+nix develop --command cargo run --bin padproxyctl -- detect
+```
+
+`detect` scans running processes from `/proc` and prints the first profile whose
+`process:` patterns match. A profile opts in by listing process names or globs:
+
+```yaml
+id: retroarch-snes
+process:
+  - retroarch
+  - "*retroarch*"
+```
+
+Patterns match a process by basename (case-insensitively) or, when they contain
+`*`/`?`, by glob against the process name.
+
 Run a foreground remap until Ctrl-C:
 
 ```sh

@@ -26,6 +26,79 @@ pub struct DeviceMatch {
     pub product_id: Option<IdValue>,
 }
 
+/// Patterns that identify the game/app a profile is meant for, used for process
+/// autodetection. A pattern matches a running process when it equals the
+/// process basename (case-insensitively) or, if it contains `*`/`?`, when it
+/// glob-matches the process name.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct ProcessMatch {
+    pub patterns: Vec<String>,
+}
+
+impl ProcessMatch {
+    pub fn is_empty(&self) -> bool {
+        self.patterns.is_empty()
+    }
+
+    /// Returns true if any pattern matches the given process name. The name may
+    /// be a short `comm` value or a full executable path; both the raw value
+    /// and its basename are tested.
+    pub fn matches(&self, process_name: &str) -> bool {
+        let candidate = process_name.trim();
+        if candidate.is_empty() {
+            return false;
+        }
+        let basename = candidate.rsplit('/').next().unwrap_or(candidate);
+        self.patterns
+            .iter()
+            .any(|pattern| pattern_matches(pattern, candidate, basename))
+    }
+}
+
+fn pattern_matches(pattern: &str, candidate: &str, basename: &str) -> bool {
+    let pattern = pattern.trim();
+    if pattern.is_empty() {
+        return false;
+    }
+    if pattern.contains('*') || pattern.contains('?') {
+        glob_matches_ci(pattern, candidate) || glob_matches_ci(pattern, basename)
+    } else {
+        pattern.eq_ignore_ascii_case(basename) || pattern.eq_ignore_ascii_case(candidate)
+    }
+}
+
+/// Case-insensitive glob match supporting `*` (any run) and `?` (one char).
+fn glob_matches_ci(pattern: &str, value: &str) -> bool {
+    let pattern: Vec<char> = pattern.to_ascii_lowercase().chars().collect();
+    let value: Vec<char> = value.to_ascii_lowercase().chars().collect();
+
+    // Iterative backtracking glob matcher.
+    let (mut p, mut v) = (0usize, 0usize);
+    let (mut star_p, mut star_v): (Option<usize>, usize) = (None, 0);
+
+    while v < value.len() {
+        if p < pattern.len() && (pattern[p] == '?' || pattern[p] == value[v]) {
+            p += 1;
+            v += 1;
+        } else if p < pattern.len() && pattern[p] == '*' {
+            star_p = Some(p);
+            star_v = v;
+            p += 1;
+        } else if let Some(sp) = star_p {
+            p = sp + 1;
+            star_v += 1;
+            v = star_v;
+        } else {
+            return false;
+        }
+    }
+
+    while p < pattern.len() && pattern[p] == '*' {
+        p += 1;
+    }
+    p == pattern.len()
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct IdValue(u16);
 
@@ -235,6 +308,7 @@ pub struct Profile {
     pub name: String,
     pub description: String,
     pub device_match: DeviceMatch,
+    pub process_match: ProcessMatch,
     pub output_type: String,
     pub passthrough: bool,
     pub grab_source: bool,
@@ -251,6 +325,7 @@ struct RawProfile {
     description: Option<String>,
     #[serde(default)]
     r#match: DeviceMatch,
+    process: Option<RawStringOrList>,
     output: Option<RawOutput>,
     passthrough: Option<bool>,
     grab_source: Option<bool>,
@@ -350,6 +425,22 @@ enum RawCommandSettings {
 enum RawCommandLine {
     Args(Vec<String>),
     Shell(String),
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum RawStringOrList {
+    Scalar(String),
+    List(Vec<String>),
+}
+
+impl RawStringOrList {
+    fn into_vec(self) -> Vec<String> {
+        match self {
+            RawStringOrList::Scalar(value) => vec![value],
+            RawStringOrList::List(values) => values,
+        }
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1000,6 +1091,16 @@ pub fn parse_profile_bytes(bytes: &[u8], source_path: &Path) -> Result<Profile> 
         name,
         description: raw.description.unwrap_or_default(),
         device_match: raw.r#match,
+        process_match: ProcessMatch {
+            patterns: raw
+                .process
+                .map(RawStringOrList::into_vec)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|pattern| pattern.trim().to_string())
+                .filter(|pattern| !pattern.is_empty())
+                .collect(),
+        },
         output_type,
         passthrough: raw.passthrough.unwrap_or(true),
         grab_source: raw.grab_source.unwrap_or(true),

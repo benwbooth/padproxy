@@ -200,7 +200,10 @@ Source pages consulted:
 
 ## Automation and Integration
 
-- Autodetect game process and apply profile.
+- Autodetect game process and apply profile. Basic process autodetection done:
+  profiles declare `process:` name/glob patterns, and `padproxyctl detect`
+  scans running `/proc` processes and reports the matching profile. Automatic
+  apply-on-detect watching remains.
 - CLI apply/select-slot/clear-slot/remap/version/help. Basic foreground
   `remap`/`apply`, `apply-slot`, `launch`, list, slot management, version, and
   help commands done.
@@ -222,4 +225,4 @@ Source pages consulted:
 5. Add virtual output type selection and hide/grab policy controls. Done; the Xbox 360, Xbox One, DualShock 4, DualSense, and Switch Pro virtual outputs each emulate their own USB identity through uinput and can all be applied.
 6. Add layers, then activators, then macros. Basic main/shift layers are done with hold/toggle activation, disable mappings, held-button turbo, press/release/long/double/triple controller activators, press-triggered controller/keyboard/mouse-button macros, relative mouse macro events, and hold-until-release controller macros; richer activators and macros remain.
 7. Add analog tuning. Basic per-axis deadzone, sensitivity, response curves, custom curve exponent, held-output zones, stick rotation, stick swap, digital 8-way stick mode, inversion, and output range are done.
-8. Add process autodetect and Lunchbox integration.
+8. Add process autodetect and Lunchbox integration. Basic process autodetection is done through profile `process:` patterns and `padproxyctl detect`; apply-on-detect watching and Lunchbox launch integration remain.
