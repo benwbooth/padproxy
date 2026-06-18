@@ -68,6 +68,19 @@ nix develop --command cargo run --bin padproxyctl -- list-batteries
 present/online state for wireless controllers and other peripherals that expose
 a Linux `power_supply` node.
 
+List and set controller LEDs (player lights and RGB light bars exposed under
+`/sys/class/leds`):
+
+```sh
+nix develop --command cargo run --bin padproxyctl -- list-leds
+nix develop --command cargo run --bin padproxyctl -- set-led \
+  --led '0005:054C:09CC.0003:rgb:indicator' \
+  --color "0 0 255"
+```
+
+`set-led` takes `--brightness <n>` (clamped to the LED's maximum) and/or
+`--color "r g b"` for RGB LEDs that expose `multi_intensity`.
+
 Detect which profile matches a running game/app:
 
 ```sh

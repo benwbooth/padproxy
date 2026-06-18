@@ -5,6 +5,7 @@ use padproxy_core::autodetect::{
 };
 use padproxy_core::blocklist::{blocklist_path, load_blocklist};
 use padproxy_core::devices::DeviceInfo;
+use padproxy_core::leds::{list_leds, set_led_brightness, set_led_color, LedInfo};
 use padproxy_core::linux::{list_devices, resolve_device, resolve_device_info};
 use padproxy_core::outputs::output_devices;
 use padproxy_core::power::{list_batteries, BatteryInfo};
@@ -33,6 +34,16 @@ enum Command {
     ListOutputs,
     ListProfiles,
     ListBatteries,
+    ListLeds,
+    SetLed {
+        #[arg(long)]
+        led: String,
+        #[arg(long)]
+        brightness: Option<u32>,
+        /// Space-separated RGB channel intensities, e.g. "255 0 0".
+        #[arg(long)]
+        color: Option<String>,
+    },
     ListBlocklist,
     Detect,
     Watch {
@@ -159,6 +170,33 @@ fn main() -> Result<()> {
             }
             Ok(())
         }
+        Command::ListLeds => {
+            let leds = list_leds();
+            if leds.is_empty() {
+                eprintln!("No LED devices reported.");
+            }
+            for led in leds {
+                let brightness = led
+                    .brightness
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "?".to_string());
+                let max = led
+                    .max_brightness
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "?".to_string());
+                let color = led
+                    .multi_intensity
+                    .map(|value| format!("\trgb={value}"))
+                    .unwrap_or_default();
+                println!("{}\t{brightness}/{max}{color}", led.name);
+            }
+            Ok(())
+        }
+        Command::SetLed {
+            led,
+            brightness,
+            color,
+        } => set_led(&led, brightness, color.as_deref()),
         Command::ListBlocklist => {
             let blocklist = load_blocklist();
             if blocklist.is_empty() {
@@ -240,6 +278,26 @@ fn main() -> Result<()> {
             controller,
         } => run_foreground_remap(&profile, &controller),
     }
+}
+
+fn set_led(led: &str, brightness: Option<u32>, color: Option<&str>) -> Result<()> {
+    if brightness.is_none() && color.is_none() {
+        return Err(anyhow!("set-led requires --brightness and/or --color"));
+    }
+    if let Some(brightness) = brightness {
+        set_led_brightness(led, brightness)?;
+        eprintln!("Set LED {led} brightness to {brightness}");
+    }
+    if let Some(color) = color {
+        let channels = color
+            .split_whitespace()
+            .map(|value| value.parse::<u32>())
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|_| anyhow!("--color must be space-separated integers, e.g. \"255 0 0\""))?;
+        set_led_color(led, &channels)?;
+        eprintln!("Set LED {led} color to {color}");
+    }
+    Ok(())
 }
 
 fn find_profile(selector: &str) -> Result<Profile> {
@@ -559,6 +617,7 @@ struct DiagnosticsReport {
     paths: DiagnosticsPaths,
     devices: Vec<DeviceInfo>,
     batteries: Vec<BatteryInfo>,
+    leds: Vec<LedInfo>,
     outputs: Vec<DiagnosticsOutput>,
     profiles: Vec<DiagnosticsProfile>,
     slots: SlotStore,
@@ -655,6 +714,7 @@ fn collect_diagnostics() -> Result<DiagnosticsReport> {
         },
         devices: list_devices()?,
         batteries: list_batteries(),
+        leds: list_leds(),
         outputs,
         profiles,
         slots: load_slot_store()?,

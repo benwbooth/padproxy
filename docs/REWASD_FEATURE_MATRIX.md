@@ -192,7 +192,9 @@ Source pages consulted:
 - Touchpad zones.
 - Controller vibration settings.
 - Rumble mappings.
-- LED settings.
+- LED settings. Basic LED control done: `padproxyctl list-leds` enumerates
+  Linux `sys/class/leds` devices (brightness, max, and RGB `multi_intensity`),
+  and `padproxyctl set-led` sets brightness (clamped) and RGB color.
 - Battery and wireless status where available. Basic device-scoped battery
   capacity, charge status, and present/online state are read from Linux sysfs
   `power_supply` nodes and exposed through `padproxyctl list-batteries` and the
