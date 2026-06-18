@@ -1,14 +1,31 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Controls.Material
 import QtQuick.Layouts
 import com.benwbooth.padproxy
 
 ApplicationWindow {
     id: root
     width: 1320
-    height: 720
+    height: 760
     visible: true
     title: "PadProxy"
+
+    Material.theme: Material.Dark
+    Material.primary: "#1b1e26"
+    Material.accent: "#00d977"
+    Material.background: "#15171d"
+
+    // Shared theme palette.
+    readonly property color colSurface: "#1b1e26"
+    readonly property color colSurfaceAlt: "#22262f"
+    readonly property color colBorder: "#2e333d"
+    readonly property color colAccent: "#00d977"
+    readonly property color colText: "#e7eaf0"
+    readonly property color colTextDim: "#9aa1ad"
+    readonly property int radius: 10
+
+    color: "#101218"
 
     Component.onCompleted: Qt.callLater(function() {
         root.show()

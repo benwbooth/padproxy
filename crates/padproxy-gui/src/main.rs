@@ -30,6 +30,9 @@ fn select_qml_file() -> String {
 }
 
 fn main() {
+    // Use the Material style so the QML can apply a cohesive dark theme.
+    std::env::set_var("QT_QUICK_CONTROLS_STYLE", "Material");
+
     padproxy_gui::gui_bridge::init_qt_static_modules();
 
     let mut app = QGuiApplication::new();
