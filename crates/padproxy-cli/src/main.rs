@@ -60,6 +60,12 @@ enum Command {
         #[arg(long, default_value = "xbox360")]
         output: String,
     },
+    GimxOutput {
+        #[arg(long)]
+        controller: String,
+        #[arg(long)]
+        serial: String,
+    },
     Detect,
     Watch {
         #[arg(long)]
@@ -232,6 +238,10 @@ fn main() -> Result<()> {
             Ok(())
         }
         Command::MobileServer { port, output } => mobile_server(port, &output),
+        Command::GimxOutput { controller, serial } => {
+            let path = resolve_device_path(&controller)?;
+            padproxy_core::gimx::run_serial_output(&path, &serial)
+        }
         Command::Detect => {
             let profiles = load_profiles(&default_profile_dirs())?;
             match detect_profile(&profiles) {

@@ -161,8 +161,11 @@ Source pages consulted:
 - External controller emulation over Bluetooth. Not implemented: presenting as
   a Bluetooth gamepad to another console needs a BlueZ HID-gadget/configfs stack,
   which is separate hardware/kernel infrastructure.
-- GIMX-style wired external output. Not implemented: needs a GIMX USB adapter
-  and its serial protocol.
+- GIMX-style wired external output. Basic serial output done: `padproxyctl
+  gimx-output` reads a controller and streams its state as fixed-size binary
+  frames to a serial device, in the GIMX style of relaying to an external
+  adapter. Driving a specific console requires an adapter with matching
+  firmware/frame layout.
 
 ## Device Support
 

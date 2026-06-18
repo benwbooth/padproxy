@@ -95,6 +95,18 @@ nix develop --command cargo run --bin padproxyctl -- set-led \
 `set-led` takes `--brightness <n>` (clamped to the LED's maximum) and/or
 `--color "r g b"` for RGB LEDs that expose `multi_intensity`.
 
+Stream a controller's state to a serial adapter (GIMX-style wired output):
+
+```sh
+nix develop --command cargo run --bin padproxyctl -- gimx-output \
+  --controller /dev/input/event259 \
+  --serial /dev/ttyUSB0
+```
+
+`gimx-output` writes fixed-size binary frames (configure the serial device's
+baud for your adapter first); a GIMX-style adapter with matching firmware relays
+them to the target console.
+
 Power off a wireless controller (disconnects it over Bluetooth via BlueZ):
 
 ```sh
