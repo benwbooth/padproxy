@@ -92,6 +92,36 @@ pub fn detect_profile(profiles: &[Profile]) -> Option<(&Profile, ProfileMatch)> 
     match_profile(profiles, &names)
 }
 
+/// What a watch loop should do after re-scanning running processes, given the
+/// profile (if any) it is currently applying.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WatchDecision {
+    /// Keep the current state (matched profile still running, or nothing to do).
+    Keep,
+    /// Start applying the named profile (a new or different match appeared).
+    Switch(String),
+    /// Stop the active remap (its matched process is gone).
+    Stop,
+}
+
+/// Decide how a watch loop should react to the current process list.
+///
+/// `active_profile_id` is the profile currently being applied, if any.
+pub fn decide_watch(
+    profiles: &[Profile],
+    process_names: &[String],
+    active_profile_id: Option<&str>,
+) -> WatchDecision {
+    let best = match_profile(profiles, process_names).map(|(profile, _)| profile.id.clone());
+    match (active_profile_id, best) {
+        (Some(active), Some(best)) if active == best => WatchDecision::Keep,
+        (Some(_), Some(best)) => WatchDecision::Switch(best),
+        (Some(_), None) => WatchDecision::Stop,
+        (None, Some(best)) => WatchDecision::Switch(best),
+        (None, None) => WatchDecision::Keep,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{match_profile, running_process_names_in, ProfileMatch};
@@ -124,6 +154,39 @@ mod tests {
         let glob_names = vec!["mednafen-wrapper".to_string()];
         let (matched, _) = match_profile(&profiles, &glob_names).unwrap();
         assert_eq!(matched.id, "mednafen");
+    }
+
+    #[test]
+    fn watch_decisions_track_running_processes() {
+        use super::{decide_watch, WatchDecision};
+
+        let profiles = vec![profile("retro", "[retroarch]"), profile("game", "[mygame]")];
+
+        // Nothing active, a match appears -> switch to it.
+        assert_eq!(
+            decide_watch(&profiles, &["retroarch".to_string()], None),
+            WatchDecision::Switch("retro".to_string())
+        );
+        // Same profile still matches -> keep.
+        assert_eq!(
+            decide_watch(&profiles, &["retroarch".to_string()], Some("retro")),
+            WatchDecision::Keep
+        );
+        // A different profile now matches -> switch.
+        assert_eq!(
+            decide_watch(&profiles, &["mygame".to_string()], Some("retro")),
+            WatchDecision::Switch("game".to_string())
+        );
+        // Active profile's process is gone -> stop.
+        assert_eq!(
+            decide_watch(&profiles, &["someoneelse".to_string()], Some("retro")),
+            WatchDecision::Stop
+        );
+        // Nothing active and nothing matches -> keep idling.
+        assert_eq!(
+            decide_watch(&profiles, &["someoneelse".to_string()], None),
+            WatchDecision::Keep
+        );
     }
 
     #[test]

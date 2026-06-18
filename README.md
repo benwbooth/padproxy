@@ -87,6 +87,19 @@ process:
 Patterns match a process by basename (case-insensitively) or, when they contain
 `*`/`?`, by glob against the process name.
 
+Auto-apply the matching profile as games come and go:
+
+```sh
+nix develop --command cargo run --bin padproxyctl -- watch \
+  --controller /dev/input/event259 \
+  --interval-ms 2000
+```
+
+`watch` polls running processes on the given interval, applies the matched
+profile, switches when a different known game takes focus, and stops the remap
+when the matched process exits. A `remap_off` command mapping pauses auto-apply
+for that game until its process exits.
+
 Run a foreground remap until Ctrl-C:
 
 ```sh

@@ -1,6 +1,8 @@
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
-use padproxy_core::autodetect::detect_profile;
+use padproxy_core::autodetect::{
+    decide_watch, detect_profile, match_profile, running_process_names, WatchDecision,
+};
 use padproxy_core::devices::DeviceInfo;
 use padproxy_core::linux::{list_devices, resolve_device};
 use padproxy_core::outputs::output_devices;
@@ -13,7 +15,7 @@ use padproxy_core::slots::{
 use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Parser)]
 #[command(author, version, about)]
@@ -29,6 +31,12 @@ enum Command {
     ListProfiles,
     ListBatteries,
     Detect,
+    Watch {
+        #[arg(long)]
+        controller: String,
+        #[arg(long, default_value_t = 2000)]
+        interval_ms: u64,
+    },
     ListSlots {
         #[arg(long)]
         controller: Option<String>,
@@ -157,6 +165,10 @@ fn main() -> Result<()> {
             }
             Ok(())
         }
+        Command::Watch {
+            controller,
+            interval_ms,
+        } => run_watch(&controller, interval_ms),
         Command::ListSlots { controller } => list_slots(controller.as_deref()),
         Command::AssignSlot {
             controller,
@@ -224,6 +236,75 @@ fn run_foreground_profile(profile: Profile, source_device_path: String) -> Resul
 
     eprintln!("PadProxy remap turned off by a remap_off command mapping.");
     Ok(())
+}
+
+/// Watch running processes and apply the matching profile automatically,
+/// switching when the foreground game changes and stopping when it exits.
+fn run_watch(controller: &str, interval_ms: u64) -> Result<()> {
+    let source_device_path = resolve_device_path(controller)?;
+    let poll = Duration::from_millis(interval_ms.max(50));
+    eprintln!(
+        "PadProxy is watching for known game processes on {source_device_path}. Press Ctrl-C to stop."
+    );
+
+    let mut active: Option<(RemapRuntime, String)> = None;
+    // Profile turned off by a remap_off command; do not re-apply until its
+    // process stops matching.
+    let mut suppressed: Option<String> = None;
+
+    loop {
+        let profiles = load_profiles(&default_profile_dirs())?;
+        let names = running_process_names();
+
+        // Clear suppression once the suppressed profile no longer matches.
+        if let Some(id) = &suppressed {
+            let still_matching = match_profile(&profiles, &names)
+                .map(|(profile, _)| &profile.id == id)
+                .unwrap_or(false);
+            if !still_matching {
+                suppressed = None;
+            }
+        }
+
+        let active_id = active.as_ref().map(|(_, id)| id.as_str());
+        match decide_watch(&profiles, &names, active_id) {
+            WatchDecision::Keep => {}
+            WatchDecision::Stop => {
+                if active.take().is_some() {
+                    eprintln!("PadProxy stopped remap; matched process exited.");
+                }
+            }
+            WatchDecision::Switch(id) => {
+                if suppressed.as_deref() != Some(id.as_str()) {
+                    let profile = profiles
+                        .into_iter()
+                        .find(|profile| profile.id == id)
+                        .ok_or_else(|| anyhow!("profile {id} disappeared during watch"))?;
+                    let runtime = RemapRuntime::start(RemapOptions {
+                        profile,
+                        source_device_path: source_device_path.clone(),
+                    })?;
+                    eprintln!("PadProxy applied profile {id}.");
+                    active = Some((runtime, id));
+                }
+            }
+        }
+
+        // Pump the active remap until the next poll, watching for remap_off.
+        let deadline = Instant::now() + poll;
+        if let Some((runtime, id)) = active.as_mut() {
+            while Instant::now() < deadline && !runtime.stop_requested() {
+                runtime.pump_once()?;
+            }
+            if runtime.stop_requested() {
+                eprintln!("PadProxy remap turned off by a remap_off command mapping.");
+                suppressed = Some(id.clone());
+                active = None;
+            }
+        } else {
+            std::thread::sleep(poll);
+        }
+    }
 }
 
 fn list_slots(controller: Option<&str>) -> Result<()> {
