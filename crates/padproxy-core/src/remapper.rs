@@ -6,6 +6,7 @@ use crate::profiles::{
     MacroMode, MacroSettings, Mapping, MappingAction, Profile, StickTransformMapping,
     MACRO_TAP_RELEASE_MS,
 };
+use crate::{log_info, log_warn};
 use anyhow::{anyhow, Context, Result};
 use evdev::uinput::VirtualDevice;
 use evdev::{
@@ -253,6 +254,20 @@ impl RemapRuntime {
         if options.profile.grab_source {
             source.grab().context("failed to grab source device")?;
         }
+
+        log_info!(
+            "remap",
+            "applied profile {} (output {}, grab={}) on {}; virtual nodes: {}",
+            options.profile.id,
+            options.profile.output_type,
+            options.profile.grab_source,
+            options.source_device_path,
+            if virtual_nodes.is_empty() {
+                "none".to_string()
+            } else {
+                virtual_nodes.join(", ")
+            }
+        );
 
         let layers = options
             .profile
@@ -976,13 +991,14 @@ impl RemapRuntime {
             CommandAction::RemapOff => {
                 self.stop_all_macros(output);
                 self.stop_requested = true;
+                log_info!("remap", "remap_off command fired; stopping remap");
             }
         }
     }
 
     fn spawn_command(&mut self, command_line: &[String]) {
         if command_line.is_empty() {
-            eprintln!("PadProxy run command mapping has an empty command_line");
+            log_warn!("command", "run command mapping has an empty command_line");
             return;
         }
 
@@ -990,9 +1006,17 @@ impl RemapRuntime {
             .args(&command_line[1..])
             .spawn()
         {
-            Ok(child) => self.command_children.push(child),
-            Err(error) => eprintln!(
-                "PadProxy failed to run command mapping {}: {error}",
+            Ok(child) => {
+                log_info!(
+                    "command",
+                    "spawned command mapping: {}",
+                    command_line.join(" ")
+                );
+                self.command_children.push(child);
+            }
+            Err(error) => log_warn!(
+                "command",
+                "failed to run command mapping {}: {error}",
                 command_line.join(" ")
             ),
         }

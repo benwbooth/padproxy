@@ -4,6 +4,7 @@ pub mod capture;
 pub mod devices;
 pub mod event_code;
 pub mod linux;
+pub mod logging;
 pub mod outputs;
 pub mod power;
 pub mod presets;

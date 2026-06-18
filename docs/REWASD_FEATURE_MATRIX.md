@@ -219,8 +219,11 @@ Source pages consulted:
   `blocklist.txt` of process name/glob patterns (viewable with
   `padproxyctl list-blocklist`) keeps `padproxyctl watch` from applying, and
   stops any active remap, while a blocked process is running.
-- Logging and diagnostic export. Basic JSON diagnostic export is done with
-  `padproxyctl diagnostics`; structured runtime logging remains.
+- Logging and diagnostic export. JSON diagnostic export is done with
+  `padproxyctl diagnostics`, and structured runtime logging is done: leveled,
+  timestamped log lines are emitted to stderr for remap lifecycle and command
+  events, controlled by the `PADPROXY_LOG` level (`error`/`warn`/`info`/`debug`/
+  `trace`/`off`, default `info`).
 
 ## Near-Term PadProxy Milestones
 

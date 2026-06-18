@@ -132,6 +132,17 @@ nix develop --command cargo run --bin padproxyctl -- remap \
   --controller /dev/input/event259
 ```
 
+Set `PADPROXY_LOG` to control structured runtime logging
+(`error`/`warn`/`info`/`debug`/`trace`/`off`, default `info`). Log lines go to
+stderr as `[<unix_ms>] <LEVEL> <target>: <message>` for remap lifecycle and
+command-mapping events:
+
+```sh
+PADPROXY_LOG=debug nix develop --command cargo run --bin padproxyctl -- remap \
+  --profile nes-2button-xa \
+  --controller /dev/input/event259
+```
+
 Manage four foreground remap slots per device:
 
 ```sh
