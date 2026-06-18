@@ -93,7 +93,8 @@ Source pages consulted:
 - Main layer plus shift layers.
 - Up to 10 shift overlays.
 - Shift activation by hold, toggle, custom activator, or shortcut.
-- Copy, paste, rename, and clear layers.
+- Copy, paste, rename, and clear layers. Basic structured-editor operations
+  done.
 - Four config slots per device.
 - Slot switching by hotkey.
 - Apply, select, and clear slots from CLI/API.

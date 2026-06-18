@@ -45,6 +45,7 @@ ApplicationWindow {
     property bool editorDirty: false
     property int selectedLayerIndex: 0
     property var layerMappings: []
+    property var layerClipboard: null
     property int selectedMappingIndex: -1
     property string selectedMappingSide: "from"
     property bool hookListening: false
@@ -866,6 +867,24 @@ ApplicationWindow {
         return rows
     }
 
+    function cloneMappingRows(rows) {
+        const copied = []
+        for (let i = 0; rows && i < rows.length; i++) {
+            copied.push({
+                fromCode: rows[i].fromCode || "btn:south",
+                toCode: rows[i].toCode || "btn:south",
+                action: rows[i].action || "map",
+                activatorKind: rows[i].activatorKind || "press",
+                macroMode: rows[i].macroMode || "press",
+                commandAction: rows[i].commandAction || "stop_macros",
+                commandLine: rows[i].commandLine || "",
+                turboEnabled: rows[i].turboEnabled === true,
+                turboIntervalMs: root.normalizedTurboInterval(rows[i].turboIntervalMs)
+            })
+        }
+        return copied
+    }
+
     function mappingRowsFromProfile(mappings) {
         const rows = []
         for (let i = 0; mappings && i < mappings.length; i++) {
@@ -947,20 +966,7 @@ ApplicationWindow {
             activationControl: activationControl || "btn:tl",
             consumeActivation: consumeActivation !== false
         })
-        const mappings = []
-        for (let i = 0; rows && i < rows.length; i++)
-            mappings.push({
-                fromCode: rows[i].fromCode,
-                toCode: rows[i].toCode,
-                action: rows[i].action || "map",
-                activatorKind: rows[i].activatorKind || "press",
-                macroMode: rows[i].macroMode || "press",
-                commandAction: rows[i].commandAction || "stop_macros",
-                commandLine: rows[i].commandLine || "",
-                turboEnabled: rows[i].turboEnabled === true,
-                turboIntervalMs: root.normalizedTurboInterval(rows[i].turboIntervalMs)
-            })
-        root.layerMappings.push(mappings)
+        root.layerMappings.push(root.cloneMappingRows(rows))
     }
 
     function resetLayers(mainRows) {
@@ -1055,6 +1061,74 @@ ApplicationWindow {
         const number = layersModel.count
         root.addLayer("shift_" + number, "Shift " + number, "hold", "btn:tl", true, [])
         root.selectLayerIndex(layersModel.count - 1)
+    }
+
+    function copyCurrentLayer() {
+        root.syncCurrentLayerMetadata()
+        root.syncCurrentLayerMappings()
+        const layer = root.currentLayer()
+        if (!layer)
+            return
+
+        root.layerClipboard = {
+            layerName: layer.layerName || layer.layerId || "Layer",
+            activationMode: layer.activationMode || "hold",
+            activationControl: layer.activationControl || "btn:tl",
+            consumeActivation: layer.consumeActivation !== false,
+            rows: root.cloneMappingRows(root.layerMappings[root.selectedLayerIndex])
+        }
+        root.hookStatus = "Copied " + (layer.layerName || layer.layerId || "layer") + "."
+    }
+
+    function pasteLayerIntoCurrent() {
+        if (!root.layerClipboard) {
+            root.hookStatus = "No copied layer."
+            return
+        }
+
+        root.syncCurrentLayerMetadata()
+        root.syncCurrentLayerMappings()
+        const layer = root.currentLayer()
+        if (!layer)
+            return
+
+        if (!root.currentLayerIsMain()) {
+            layersModel.setProperty(
+                root.selectedLayerIndex,
+                "layerName",
+                root.layerClipboard.layerName || layer.layerName || layer.layerId
+            )
+            layersModel.setProperty(
+                root.selectedLayerIndex,
+                "activationMode",
+                root.layerClipboard.activationMode || "hold"
+            )
+            layersModel.setProperty(
+                root.selectedLayerIndex,
+                "activationControl",
+                root.layerClipboard.activationControl || "btn:tl"
+            )
+            layersModel.setProperty(
+                root.selectedLayerIndex,
+                "consumeActivation",
+                root.layerClipboard.consumeActivation !== false
+            )
+        }
+        root.layerMappings[root.selectedLayerIndex] = root.cloneMappingRows(root.layerClipboard.rows)
+        root.setMappingRows(root.layerMappings[root.selectedLayerIndex])
+        root.loadCurrentLayerFields()
+        root.hookStatus = "Pasted layer settings."
+    }
+
+    function clearCurrentLayerMappings() {
+        root.syncCurrentLayerMetadata()
+        const layer = root.currentLayer()
+        if (!layer)
+            return
+
+        root.layerMappings[root.selectedLayerIndex] = []
+        root.setMappingRows([])
+        root.hookStatus = "Cleared " + (layer.layerName || layer.layerId || "layer") + " mappings."
     }
 
     function removeCurrentLayer() {
@@ -1728,6 +1802,23 @@ ApplicationWindow {
                                             text: "Add Shift"
                                             enabled: layersModel.count < 11
                                             onClicked: root.addShiftLayer()
+                                        }
+
+                                        Button {
+                                            text: "Copy"
+                                            onClicked: root.copyCurrentLayer()
+                                        }
+
+                                        Button {
+                                            text: "Paste"
+                                            enabled: root.layerClipboard !== null
+                                            onClicked: root.pasteLayerIntoCurrent()
+                                        }
+
+                                        Button {
+                                            text: "Clear"
+                                            enabled: mappingsModel.count > 0
+                                            onClicked: root.clearCurrentLayerMappings()
                                         }
 
                                         Button {
