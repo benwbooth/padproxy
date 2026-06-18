@@ -90,6 +90,13 @@ nix develop --command cargo run --bin padproxyctl -- list-slots \
 Slots are stored in `~/.config/padproxy/slots.json`, or in
 `$PADPROXY_SLOT_FILE` when that variable is set.
 
+Export a JSON diagnostic snapshot:
+
+```sh
+nix develop --command cargo run --bin padproxyctl -- diagnostics \
+  --output padproxy-diagnostics.json
+```
+
 Launch a command through a profile:
 
 ```sh

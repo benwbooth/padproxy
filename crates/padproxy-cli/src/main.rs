@@ -8,7 +8,10 @@ use padproxy_core::remapper::{launch_with_remap, LaunchOptions, RemapOptions, Re
 use padproxy_core::slots::{
     load_slot_store, save_slot_store, validate_slot, SlotStore, SLOT_COUNT,
 };
-use std::path::Path;
+use serde::Serialize;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Parser)]
 #[command(author, version, about)]
@@ -51,6 +54,10 @@ enum Command {
         controller: String,
         #[arg(long)]
         slot: Option<u8>,
+    },
+    Diagnostics {
+        #[arg(long)]
+        output: Option<PathBuf>,
     },
     Remap {
         #[arg(long)]
@@ -125,6 +132,7 @@ fn main() -> Result<()> {
         Command::SelectSlot { controller, slot } => select_slot(&controller, slot),
         Command::ClearSlot { controller, slot } => clear_slot(&controller, slot),
         Command::ApplySlot { controller, slot } => apply_slot(&controller, slot),
+        Command::Diagnostics { output } => export_diagnostics(output.as_deref()),
         Command::Launch {
             profile,
             controller,
@@ -309,4 +317,112 @@ fn device_label(device: &DeviceInfo) -> String {
     } else {
         format!("{} ({})", device.name, device.id)
     }
+}
+
+#[derive(Serialize)]
+struct DiagnosticsReport {
+    version: &'static str,
+    generated_at_unix_ms: u128,
+    platform: DiagnosticsPlatform,
+    paths: DiagnosticsPaths,
+    devices: Vec<DeviceInfo>,
+    outputs: Vec<DiagnosticsOutput>,
+    profiles: Vec<DiagnosticsProfile>,
+    slots: SlotStore,
+}
+
+#[derive(Serialize)]
+struct DiagnosticsPlatform {
+    os: &'static str,
+    arch: &'static str,
+}
+
+#[derive(Serialize)]
+struct DiagnosticsPaths {
+    profile_dirs: Vec<String>,
+    slot_store: String,
+}
+
+#[derive(Serialize)]
+struct DiagnosticsOutput {
+    id: String,
+    label: String,
+    supported: bool,
+    note: String,
+}
+
+#[derive(Serialize)]
+struct DiagnosticsProfile {
+    id: String,
+    name: String,
+    description: String,
+    output_type: String,
+    source_path: String,
+    layer_count: usize,
+    mapping_count: usize,
+}
+
+fn export_diagnostics(output_path: Option<&Path>) -> Result<()> {
+    let report = collect_diagnostics()?;
+    let json = serde_json::to_string_pretty(&report)?;
+
+    if let Some(output_path) = output_path {
+        fs::write(output_path, json)?;
+        eprintln!("Wrote diagnostics to {}", output_path.display());
+    } else {
+        println!("{json}");
+    }
+
+    Ok(())
+}
+
+fn collect_diagnostics() -> Result<DiagnosticsReport> {
+    let profile_dirs = default_profile_dirs();
+    let profiles = load_profiles(&profile_dirs)?
+        .into_iter()
+        .map(|profile| DiagnosticsProfile {
+            id: profile.id,
+            name: profile.name,
+            description: profile.description,
+            output_type: profile.output_type,
+            source_path: profile.source_path.display().to_string(),
+            layer_count: profile.layers.len(),
+            mapping_count: profile
+                .layers
+                .iter()
+                .map(|layer| layer.mappings.len())
+                .sum(),
+        })
+        .collect();
+    let outputs = output_devices()
+        .iter()
+        .map(|output| DiagnosticsOutput {
+            id: output.id.to_string(),
+            label: output.label.to_string(),
+            supported: output.supported,
+            note: output.note.to_string(),
+        })
+        .collect();
+
+    Ok(DiagnosticsReport {
+        version: env!("CARGO_PKG_VERSION"),
+        generated_at_unix_ms: SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis(),
+        platform: DiagnosticsPlatform {
+            os: std::env::consts::OS,
+            arch: std::env::consts::ARCH,
+        },
+        paths: DiagnosticsPaths {
+            profile_dirs: profile_dirs
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect(),
+            slot_store: padproxy_core::slots::slot_store_path()
+                .display()
+                .to_string(),
+        },
+        devices: list_devices()?,
+        outputs,
+        profiles,
+        slots: load_slot_store()?,
+    })
 }

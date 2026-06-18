@@ -199,7 +199,8 @@ Source pages consulted:
 - Per-emulator/game launch integration.
 - Emergency remap off.
 - Blocklist for apps/games where remap should not apply.
-- Logging and diagnostic export.
+- Logging and diagnostic export. Basic JSON diagnostic export is done with
+  `padproxyctl diagnostics`; structured runtime logging remains.
 
 ## Near-Term PadProxy Milestones
 

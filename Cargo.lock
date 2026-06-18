@@ -846,6 +846,8 @@ dependencies = [
  "anyhow",
  "clap",
  "padproxy-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
