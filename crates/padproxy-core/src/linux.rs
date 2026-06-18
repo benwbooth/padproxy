@@ -57,6 +57,35 @@ pub fn resolve_device(selector: &str) -> Result<String> {
         .ok_or_else(|| anyhow::anyhow!("no input device matched {selector}"))
 }
 
+/// Resolve a selector (device id, name, or path) to full device info. An
+/// absolute path that matches no known device is accepted as a raw path device.
+pub fn resolve_device_info(selector: &str) -> Result<DeviceInfo> {
+    if let Some(device) = list_devices()?
+        .into_iter()
+        .find(|device| device.id == selector || device.name == selector || device.path == selector)
+    {
+        return Ok(device);
+    }
+
+    if Path::new(selector).is_absolute() {
+        return Ok(DeviceInfo {
+            id: format!("path:{selector}"),
+            name: selector.to_string(),
+            path: selector.to_string(),
+            device_kind: "path".to_string(),
+            phys: String::new(),
+            uniq: String::new(),
+            bus: 0,
+            vendor: 0,
+            product: 0,
+            version: 0,
+            capabilities: Vec::new(),
+        });
+    }
+
+    Err(anyhow::anyhow!("no input device matched {selector}"))
+}
+
 fn should_show_device(path: &Path, device: &Device, name: &str, device_kind: &str) -> bool {
     name_has_controller_hint(name)
         || has_joystick_devlink(path)

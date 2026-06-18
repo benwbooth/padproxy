@@ -106,8 +106,10 @@ Source pages consulted:
   done.
 - Four config slots per device. Basic persistent CLI slots done.
 - Slot switching by hotkey.
-- Apply, select, and clear slots from CLI/API. Basic CLI assign, select,
-  apply, list, and clear slot commands done; API commands remain.
+- Apply, select, and clear slots from CLI/API. Done: CLI assign, select,
+  apply, list, and clear slot commands, plus matching `assign_slot`,
+  `select_slot`, `clear_slot`, `list_slots`, and `apply_slot` commands over the
+  local control API.
 
 ## Analog Controls
 
@@ -210,7 +212,10 @@ Source pages consulted:
 - CLI apply/select-slot/clear-slot/remap/version/help. Basic foreground
   `remap`/`apply`, `apply-slot`, `launch`, list, slot management, version, and
   help commands done.
-- Local API/DBus service.
+- Local API/DBus service. Basic local control API done: `padproxyctl serve`
+  exposes a Unix-socket JSON API (status, list profiles/devices/batteries,
+  detect, slot management, and live apply/remap-off), and `padproxyctl ctl`
+  is a client for it. A DBus front end remains.
 - Per-emulator/game launch integration.
 - Emergency remap off. Done through a `remap_off` command mapping that stops
   the running remap, releases the virtual device, and ungrabs the source

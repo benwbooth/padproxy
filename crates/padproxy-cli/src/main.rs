@@ -5,12 +5,13 @@ use padproxy_core::autodetect::{
 };
 use padproxy_core::blocklist::{blocklist_path, load_blocklist};
 use padproxy_core::devices::DeviceInfo;
-use padproxy_core::linux::{list_devices, resolve_device};
+use padproxy_core::linux::{list_devices, resolve_device, resolve_device_info};
 use padproxy_core::outputs::output_devices;
 use padproxy_core::power::{list_batteries, BatteryInfo};
 use padproxy_core::presets::{export_profile_yaml, install_profile};
 use padproxy_core::profiles::{default_profile_dirs, load_profiles, Profile};
 use padproxy_core::remapper::{launch_with_remap, LaunchOptions, RemapOptions, RemapRuntime};
+use padproxy_core::service::ServiceState;
 use padproxy_core::slots::{
     load_slot_store, save_slot_store, validate_slot, SlotStore, SLOT_COUNT,
 };
@@ -39,6 +40,16 @@ enum Command {
         controller: String,
         #[arg(long, default_value_t = 2000)]
         interval_ms: u64,
+    },
+    Serve {
+        #[arg(long)]
+        socket: Option<PathBuf>,
+    },
+    Ctl {
+        #[arg(long)]
+        socket: Option<PathBuf>,
+        #[arg(long)]
+        request: String,
     },
     ListSlots {
         #[arg(long)]
@@ -192,6 +203,8 @@ fn main() -> Result<()> {
             controller,
             interval_ms,
         } => run_watch(&controller, interval_ms),
+        Command::Serve { socket } => run_serve(socket),
+        Command::Ctl { socket, request } => run_ctl(socket, &request),
         Command::ListSlots { controller } => list_slots(controller.as_deref()),
         Command::AssignSlot {
             controller,
@@ -354,6 +367,84 @@ fn run_watch(controller: &str, interval_ms: u64) -> Result<()> {
     }
 }
 
+fn default_socket_path() -> PathBuf {
+    if let Some(runtime_dir) = std::env::var_os("XDG_RUNTIME_DIR") {
+        return PathBuf::from(runtime_dir).join("padproxy.sock");
+    }
+    PathBuf::from("/tmp").join(format!("padproxy-{}.sock", std::process::id()))
+}
+
+/// Run the local control API over a Unix socket.
+fn run_serve(socket: Option<PathBuf>) -> Result<()> {
+    use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::net::UnixListener;
+
+    let socket_path = socket.unwrap_or_else(default_socket_path);
+    if socket_path.exists() {
+        std::fs::remove_file(&socket_path)
+            .with_context(|| format!("failed to remove stale socket {}", socket_path.display()))?;
+    }
+    if let Some(parent) = socket_path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+
+    let listener = UnixListener::bind(&socket_path)
+        .with_context(|| format!("failed to bind {}", socket_path.display()))?;
+    eprintln!(
+        "PadProxy control API listening on {}. Press Ctrl-C to stop.",
+        socket_path.display()
+    );
+
+    let mut state = ServiceState::new();
+
+    for stream in listener.incoming() {
+        let mut stream = match stream {
+            Ok(stream) => stream,
+            Err(error) => {
+                eprintln!("PadProxy connection error: {error}");
+                continue;
+            }
+        };
+        let reader_stream = stream.try_clone()?;
+        let reader = BufReader::new(reader_stream);
+        for line in reader.lines() {
+            let line = match line {
+                Ok(line) => line,
+                Err(_) => break,
+            };
+            if line.trim().is_empty() {
+                continue;
+            }
+            let response = state.handle_json(&line);
+            if writeln!(stream, "{response}").is_err() {
+                break;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Send a single JSON request to a running control API and print the response.
+fn run_ctl(socket: Option<PathBuf>, request: &str) -> Result<()> {
+    use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::net::UnixStream;
+
+    let socket_path = socket.unwrap_or_else(default_socket_path);
+    let mut stream = UnixStream::connect(&socket_path)
+        .with_context(|| format!("failed to connect to {}", socket_path.display()))?;
+    writeln!(stream, "{}", request.trim()).context("failed to send request")?;
+
+    let reader_stream = stream.try_clone()?;
+    let mut reader = BufReader::new(reader_stream);
+    let mut response = String::new();
+    reader
+        .read_line(&mut response)
+        .context("failed to read response")?;
+    print!("{response}");
+    Ok(())
+}
+
 fn list_slots(controller: Option<&str>) -> Result<()> {
     let store = load_slot_store()?;
     if let Some(controller) = controller {
@@ -449,31 +540,7 @@ fn resolve_device_path(selector: &str) -> Result<String> {
 }
 
 fn select_device(selector: &str) -> Result<DeviceInfo> {
-    list_devices()?
-        .into_iter()
-        .find(|device| device.id == selector || device.name == selector || device.path == selector)
-        .or_else(|| fallback_absolute_device(selector))
-        .ok_or_else(|| anyhow!("no input device matched {selector}"))
-}
-
-fn fallback_absolute_device(selector: &str) -> Option<DeviceInfo> {
-    if !Path::new(selector).is_absolute() {
-        return None;
-    }
-
-    Some(DeviceInfo {
-        id: format!("path:{selector}"),
-        name: selector.to_string(),
-        path: selector.to_string(),
-        device_kind: "path".to_string(),
-        phys: String::new(),
-        uniq: String::new(),
-        bus: 0,
-        vendor: 0,
-        product: 0,
-        version: 0,
-        capabilities: Vec::new(),
-    })
+    resolve_device_info(selector)
 }
 
 fn device_label(device: &DeviceInfo) -> String {

@@ -132,6 +132,22 @@ nix develop --command cargo run --bin padproxyctl -- remap \
   --controller /dev/input/event259
 ```
 
+Run a local control API over a Unix socket, and drive it with the `ctl` client:
+
+```sh
+nix develop --command cargo run --bin padproxyctl -- serve \
+  --socket /tmp/padproxy.sock
+nix develop --command cargo run --bin padproxyctl -- ctl \
+  --socket /tmp/padproxy.sock \
+  --request '{"cmd":"status"}'
+```
+
+The API accepts one JSON request per line and replies with one JSON line.
+Commands include `status`, `list_profiles`, `list_devices`, `list_batteries`,
+`detect`, slot management (`list_slots`, `assign_slot`, `select_slot`,
+`clear_slot`, `apply_slot`), and live remap control (`apply`, `remap_off`). The
+socket defaults to `$XDG_RUNTIME_DIR/padproxy.sock`.
+
 Set `PADPROXY_LOG` to control structured runtime logging
 (`error`/`warn`/`info`/`debug`/`trace`/`off`, default `info`). Log lines go to
 stderr as `[<unix_ms>] <LEVEL> <target>: <message>` for remap lifecycle and

@@ -107,13 +107,16 @@ pub fn slot_store_path() -> PathBuf {
 }
 
 pub fn load_slot_store() -> Result<SlotStore> {
-    let path = slot_store_path();
+    load_slot_store_from(&slot_store_path())
+}
+
+pub fn load_slot_store_from(path: &std::path::Path) -> Result<SlotStore> {
     if !path.exists() {
         return Ok(SlotStore::default());
     }
 
     let bytes =
-        fs::read(&path).with_context(|| format!("failed to read slot store {}", path.display()))?;
+        fs::read(path).with_context(|| format!("failed to read slot store {}", path.display()))?;
     if bytes.iter().all(|byte| byte.is_ascii_whitespace()) {
         return Ok(SlotStore::default());
     }
@@ -123,7 +126,10 @@ pub fn load_slot_store() -> Result<SlotStore> {
 }
 
 pub fn save_slot_store(store: &SlotStore) -> Result<()> {
-    let path = slot_store_path();
+    save_slot_store_to(&slot_store_path(), store)
+}
+
+pub fn save_slot_store_to(path: &std::path::Path, store: &SlotStore) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| {
             format!("failed to create slot store directory {}", parent.display())
@@ -131,8 +137,7 @@ pub fn save_slot_store(store: &SlotStore) -> Result<()> {
     }
 
     let bytes = serde_json::to_vec_pretty(store).context("failed to serialize slot store")?;
-    fs::write(&path, bytes)
-        .with_context(|| format!("failed to write slot store {}", path.display()))
+    fs::write(path, bytes).with_context(|| format!("failed to write slot store {}", path.display()))
 }
 
 pub fn validate_slot(slot: u8) -> Result<()> {

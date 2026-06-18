@@ -10,4 +10,6 @@ pub mod power;
 pub mod presets;
 pub mod profiles;
 pub mod remapper;
+pub mod service;
+pub mod session;
 pub mod slots;
