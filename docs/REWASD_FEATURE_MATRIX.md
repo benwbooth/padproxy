@@ -250,9 +250,9 @@ Joy-Cons) are tracked separately under Sensors/Grouping.
 - Crosshair overlay. Basic crosshair done: `padproxy --overlay crosshair`
   shows a transparent, always-on-top, click-through full-screen window that
   draws a center crosshair.
-- Screen magnifier. Not implemented: a live magnifier needs a PipeWire
-  screencast/portal backend to read the screen, which is outside the current
-  evdev/uinput scope.
+- Screen magnifier. Basic magnifier done: `padproxy --overlay magnifier` shows
+  a zoomed view of the screen center using Qt's `ScreenCapture` (works on X11
+  and on Wayland where a screencast portal is available); `+`/`-` change zoom.
 
 ## Automation and Integration
 

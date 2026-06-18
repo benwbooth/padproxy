@@ -17,6 +17,7 @@
             pkgs.qt6.qtbase
             pkgs.qt6.qtdeclarative
             pkgs.qt6.qtsvg
+            pkgs.qt6.qtmultimedia
           ];
         };
         qmakeForCxxQt = pkgs.writeShellScriptBin "padproxy-qmake6" ''
@@ -78,6 +79,7 @@
             pkgs.qt6.qtbase
             pkgs.qt6.qtdeclarative
             pkgs.qt6.qtsvg
+            pkgs.qt6.qtmultimedia
             qtEnv
           ];
 
@@ -131,6 +133,7 @@
             pkgs.pkg-config
             pkgs.libevdev
             pkgs.libglvnd
+            pkgs.qt6.qtmultimedia
             qmakeForCxxQt
             qtEnv
             pkgs.gh

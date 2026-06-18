@@ -19,6 +19,7 @@ fn select_qml_file() -> String {
                 "radial" => return format!("{QML_BASE}/radial.qml"),
                 "layer" => return format!("{QML_BASE}/layer.qml"),
                 "desktop" => return format!("{QML_BASE}/desktop.qml"),
+                "magnifier" => return format!("{QML_BASE}/magnifier.qml"),
                 other => eprintln!("PadProxy: unknown overlay '{other}', showing main window"),
             }
         } else {
