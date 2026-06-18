@@ -184,7 +184,10 @@ Source pages consulted:
 - Controller vibration settings.
 - Rumble mappings.
 - LED settings.
-- Battery and wireless status where available.
+- Battery and wireless status where available. Basic device-scoped battery
+  capacity, charge status, and present/online state are read from Linux sysfs
+  `power_supply` nodes and exposed through `padproxyctl list-batteries` and the
+  diagnostics export.
 - Wireless controller power-off command.
 
 ## Overlays and Menus

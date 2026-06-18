@@ -55,13 +55,18 @@ Run the Qt interface:
 nix develop --command cargo run --bin padproxy
 ```
 
-List devices, outputs, and profiles:
+List devices, outputs, profiles, and controller batteries:
 
 ```sh
 nix develop --command cargo run --bin padproxyctl -- list-devices
 nix develop --command cargo run --bin padproxyctl -- list-outputs
 nix develop --command cargo run --bin padproxyctl -- list-profiles
+nix develop --command cargo run --bin padproxyctl -- list-batteries
 ```
+
+`list-batteries` reports per-device battery capacity, charge status, and
+present/online state for wireless controllers and other peripherals that expose
+a Linux `power_supply` node.
 
 Run a foreground remap until Ctrl-C:
 

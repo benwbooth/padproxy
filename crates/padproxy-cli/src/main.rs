@@ -3,6 +3,7 @@ use clap::{Parser, Subcommand};
 use padproxy_core::devices::DeviceInfo;
 use padproxy_core::linux::{list_devices, resolve_device};
 use padproxy_core::outputs::output_devices;
+use padproxy_core::power::{list_batteries, BatteryInfo};
 use padproxy_core::profiles::{default_profile_dirs, load_profiles, Profile};
 use padproxy_core::remapper::{launch_with_remap, LaunchOptions, RemapOptions, RemapRuntime};
 use padproxy_core::slots::{
@@ -25,6 +26,7 @@ enum Command {
     ListDevices,
     ListOutputs,
     ListProfiles,
+    ListBatteries,
     ListSlots {
         #[arg(long)]
         controller: Option<String>,
@@ -120,6 +122,23 @@ fn main() -> Result<()> {
                     profile.name,
                     profile.source_path.display()
                 );
+            }
+            Ok(())
+        }
+        Command::ListBatteries => {
+            let batteries = list_batteries();
+            if batteries.is_empty() {
+                eprintln!("No device batteries reported.");
+            }
+            for battery in batteries {
+                let capacity = battery
+                    .capacity
+                    .map(|value| format!("{value}%"))
+                    .or(battery.capacity_level)
+                    .unwrap_or_else(|| "unknown".to_string());
+                let status = battery.status.unwrap_or_else(|| "Unknown".to_string());
+                let model = battery.model.unwrap_or_else(|| battery.name.clone());
+                println!("{}\t{}\t{}\t{}", battery.name, model, capacity, status);
             }
             Ok(())
         }
@@ -329,6 +348,7 @@ struct DiagnosticsReport {
     platform: DiagnosticsPlatform,
     paths: DiagnosticsPaths,
     devices: Vec<DeviceInfo>,
+    batteries: Vec<BatteryInfo>,
     outputs: Vec<DiagnosticsOutput>,
     profiles: Vec<DiagnosticsProfile>,
     slots: SlotStore,
@@ -424,6 +444,7 @@ fn collect_diagnostics() -> Result<DiagnosticsReport> {
                 .to_string(),
         },
         devices: list_devices()?,
+        batteries: list_batteries(),
         outputs,
         profiles,
         slots: load_slot_store()?,

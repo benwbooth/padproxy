@@ -3,6 +3,7 @@ pub mod devices;
 pub mod event_code;
 pub mod linux;
 pub mod outputs;
+pub mod power;
 pub mod profiles;
 pub mod remapper;
 pub mod slots;
