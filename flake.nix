@@ -43,6 +43,13 @@
                 echo "${qtEnv}/lib/qt-6/qml"
                 exit 0
                 ;;
+              QT_INSTALL_HEADERS*)
+                # Point at the merged env so moc/qmltyperegistrar can find
+                # QtQml headers (qqmlregistration.h) that live in qtdeclarative,
+                # enabling pure-Rust #[qml_element] registration.
+                echo "${qtEnv}/include"
+                exit 0
+                ;;
             esac
           fi
           exec "$real_qmake" "$@"

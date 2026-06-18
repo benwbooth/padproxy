@@ -1,5 +1,9 @@
-use cxx_qt_build::{CppFile, CxxQtBuilder, QmlModule};
+use cxx_qt_build::{CxxQtBuilder, QmlModule};
 
+// The GUI is pure Rust: the QObject is registered with QML via `#[qml_element]`
+// (see `gui_bridge.rs`), so no hand-written C++ registration shim is needed. For
+// that to work, moc must find QtQml headers; the flake's qmake wrapper points
+// `QT_INSTALL_HEADERS` at the merged Qt env so `qqmlregistration.h` is visible.
 fn main() {
     println!("cargo:rerun-if-changed=qml/main.qml");
     println!("cargo:rerun-if-changed=qml/crosshair.qml");
@@ -7,7 +11,6 @@ fn main() {
     println!("cargo:rerun-if-changed=qml/layer.qml");
     println!("cargo:rerun-if-changed=qml/desktop.qml");
     println!("cargo:rerun-if-changed=src/gui_bridge.rs");
-    println!("cargo:rerun-if-changed=src/qml_registration.cpp");
 
     CxxQtBuilder::new_qml_module(
         QmlModule::new("com.benwbooth.padproxy")
@@ -27,6 +30,5 @@ fn main() {
     .qt_module("QuickControls2")
     .qt_module("Svg")
     .files(["src/gui_bridge.rs"])
-    .cpp_file(CppFile::from("src/qml_registration.cpp").moc(false))
     .build();
 }

@@ -6,10 +6,6 @@ use std::sync::{
     Arc,
 };
 
-extern "C" {
-    fn padproxy_register_qml_types();
-}
-
 const QML_BASE: &str = "qrc:/qt/qml/com/benwbooth/padproxy/qml";
 
 /// Pick the root QML file from CLI args. `--overlay <name>` loads an overlay
@@ -34,9 +30,6 @@ fn select_qml_file() -> String {
 
 fn main() {
     padproxy_gui::gui_bridge::init_qt_static_modules();
-    unsafe {
-        padproxy_register_qml_types();
-    }
 
     let mut app = QGuiApplication::new();
     let mut engine = QQmlApplicationEngine::new();
