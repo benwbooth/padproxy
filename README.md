@@ -106,7 +106,8 @@ structured editor or hold a virtual button until the source is released; the
 raw YAML editor also supports explicit controller/keyboard/mouse button down/up
 events, relative mouse-axis events with `rel` plus `value`, axis set events,
 release-side events, and pauses. Command rows can run PadProxy commands such as
-stopping queued and held macro output. The editor shows implemented and planned
+stopping queued and held macro output or launch an external command without
+blocking remap input. The editor shows implemented and planned
 virtual outputs, but only implemented outputs can be applied. `Apply` starts a
 background remap using the selected controller and current profile contents;
 `Remap Off` stops it and removes the virtual
@@ -209,6 +210,11 @@ mappings:
   - from: btn:select
     action: command
     command: stop_macros
+  - from: btn:mode
+    action: command
+    command:
+      action: run
+      shell: "notify-send PadProxy mapping-fired"
   - from: btn:east
     to: btn:west
   - from: btn:west

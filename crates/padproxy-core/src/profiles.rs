@@ -91,12 +91,14 @@ pub struct MacroSettings {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct CommandSettings {
     pub action: CommandAction,
+    pub command_line: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CommandAction {
     StopMacros,
+    RunCommand,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -329,11 +331,25 @@ enum RawCommandSettings {
     Object(RawCommandObject),
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum RawCommandLine {
+    Args(Vec<String>),
+    Shell(String),
+}
+
 #[derive(Debug, Default, Deserialize)]
 struct RawCommandObject {
     action: Option<String>,
     name: Option<String>,
     command: Option<String>,
+    command_line: Option<RawCommandLine>,
+    args: Option<Vec<String>>,
+    argv: Option<Vec<String>>,
+    program: Option<String>,
+    executable: Option<String>,
+    shell: Option<String>,
+    run: Option<RawCommandLine>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1216,28 +1232,176 @@ fn parse_command_settings(
 
     let raw = raw
         .ok_or_else(|| anyhow!("command mapping from {from_name} in {context} requires command"))?;
-    let value = match raw {
-        RawCommandSettings::Scalar(value) => value,
-        RawCommandSettings::Object(object) => object
-            .action
-            .or(object.name)
-            .or(object.command)
-            .ok_or_else(|| {
-                anyhow!("command mapping from {from_name} in {context} requires command action")
-            })?,
+    let settings = match raw {
+        RawCommandSettings::Scalar(value) => {
+            let action = parse_command_action(&value)?;
+            if action == CommandAction::RunCommand {
+                return Err(anyhow!(
+                    "run command mapping from {from_name} in {context} requires command_line"
+                ));
+            }
+            CommandSettings {
+                action,
+                command_line: Vec::new(),
+            }
+        }
+        RawCommandSettings::Object(object) => parse_command_object(object, from_name, context)?,
     };
 
-    Ok(Some(CommandSettings {
-        action: parse_command_action(&value)?,
-    }))
+    Ok(Some(settings))
 }
 
 fn parse_command_action(value: &str) -> Result<CommandAction> {
     match normalize_mapping_keyword(value).as_str() {
         "stop_macros" | "stop_all_macros" | "cancel_macros" | "cancel_all_macros"
         | "break_macros" | "clear_macro_queue" => Ok(CommandAction::StopMacros),
+        "run" | "run_command" | "launch" | "launch_app" | "launch_application" | "exec"
+        | "execute" => Ok(CommandAction::RunCommand),
         other => Err(anyhow!("unknown command action {other}")),
     }
+}
+
+fn parse_command_object(
+    object: RawCommandObject,
+    from_name: &str,
+    context: &str,
+) -> Result<CommandSettings> {
+    let RawCommandObject {
+        action,
+        name,
+        command,
+        command_line,
+        args,
+        argv,
+        program,
+        executable,
+        shell,
+        run,
+    } = object;
+
+    let has_run_fields = command_line.is_some()
+        || args.is_some()
+        || argv.is_some()
+        || program.is_some()
+        || executable.is_some()
+        || shell.is_some()
+        || run.is_some();
+
+    let action = match action.or(name) {
+        Some(value) => parse_command_action(&value)?,
+        None if has_run_fields => CommandAction::RunCommand,
+        None => {
+            let value = command.ok_or_else(|| {
+                anyhow!("command mapping from {from_name} in {context} requires command action")
+            })?;
+            return Ok(CommandSettings {
+                action: parse_command_action(&value)?,
+                command_line: Vec::new(),
+            });
+        }
+    };
+
+    let command_line = match action {
+        CommandAction::StopMacros => {
+            if has_run_fields {
+                return Err(anyhow!(
+                    "stop_macros command mapping from {from_name} in {context} cannot use command_line"
+                ));
+            }
+            Vec::new()
+        }
+        CommandAction::RunCommand => parse_run_command_line(
+            command,
+            command_line,
+            args,
+            argv,
+            program,
+            executable,
+            shell,
+            run,
+            from_name,
+            context,
+        )?,
+    };
+
+    Ok(CommandSettings {
+        action,
+        command_line,
+    })
+}
+
+fn parse_run_command_line(
+    command: Option<String>,
+    command_line: Option<RawCommandLine>,
+    args: Option<Vec<String>>,
+    argv: Option<Vec<String>>,
+    program: Option<String>,
+    executable: Option<String>,
+    shell: Option<String>,
+    run: Option<RawCommandLine>,
+    from_name: &str,
+    context: &str,
+) -> Result<Vec<String>> {
+    let mut candidates = Vec::new();
+    if let Some(line) = run {
+        candidates.push(raw_command_line_to_args(line));
+    }
+    if let Some(line) = command_line {
+        candidates.push(raw_command_line_to_args(line));
+    }
+    if let Some(command) = command {
+        candidates.push(shell_command_line(command));
+    }
+    if let Some(shell) = shell {
+        candidates.push(shell_command_line(shell));
+    }
+    let executable = program.or(executable);
+    match (executable, argv, args) {
+        (Some(_), Some(_), Some(_)) => {
+            return Err(anyhow!(
+                "run command mapping from {from_name} in {context} cannot combine argv and args with program"
+            ));
+        }
+        (Some(program), Some(mut argv), None) | (Some(program), None, Some(mut argv)) => {
+            let mut command_line = vec![program];
+            command_line.append(&mut argv);
+            candidates.push(command_line);
+        }
+        (Some(program), None, None) => candidates.push(vec![program]),
+        (None, Some(argv), None) | (None, None, Some(argv)) => candidates.push(argv),
+        (None, None, None) => {}
+        (None, Some(_), Some(_)) => {
+            return Err(anyhow!(
+                "run command mapping from {from_name} in {context} cannot combine argv and args"
+            ));
+        }
+    }
+
+    if candidates.len() != 1 {
+        return Err(anyhow!(
+            "run command mapping from {from_name} in {context} requires exactly one command_line, args, argv, program, executable, shell, command, or run value"
+        ));
+    }
+
+    let mut command_line = candidates.remove(0);
+    command_line.retain(|part| !part.is_empty());
+    if command_line.is_empty() {
+        return Err(anyhow!(
+            "run command mapping from {from_name} in {context} requires a non-empty command_line"
+        ));
+    }
+    Ok(command_line)
+}
+
+fn raw_command_line_to_args(raw: RawCommandLine) -> Vec<String> {
+    match raw {
+        RawCommandLine::Args(args) => args,
+        RawCommandLine::Shell(command) => shell_command_line(command),
+    }
+}
+
+fn shell_command_line(command: String) -> Vec<String> {
+    vec!["sh".to_string(), "-c".to_string(), command]
 }
 
 fn parse_macro_settings(
@@ -2327,12 +2491,21 @@ mappings:
   - from: btn:mode
     command:
       action: cancel_all_macros
+  - from: btn:start
+    command:
+      action: run
+      args: ["printf", "hello"]
+  - from: btn:tl
+    command:
+      action: run
+      program: notify-send
+      args: ["PadProxy", "mapping fired"]
 "#,
             Path::new("commands.yaml"),
         )
         .unwrap();
 
-        assert_eq!(profile.mappings.len(), 2);
+        assert_eq!(profile.mappings.len(), 4);
         assert_eq!(profile.mappings[0].action, MappingAction::Command);
         assert_eq!(profile.mappings[0].to_name, "btn:select");
         assert!(profile.mapping_table().is_empty());
@@ -2343,6 +2516,15 @@ mappings:
         assert_eq!(
             profile.mappings[1].command.as_ref().unwrap().action,
             CommandAction::StopMacros
+        );
+        let run_command = profile.mappings[2].command.as_ref().unwrap();
+        assert_eq!(run_command.action, CommandAction::RunCommand);
+        assert_eq!(run_command.command_line, vec!["printf", "hello"]);
+        let program_command = profile.mappings[3].command.as_ref().unwrap();
+        assert_eq!(program_command.action, CommandAction::RunCommand);
+        assert_eq!(
+            program_command.command_line,
+            vec!["notify-send", "PadProxy", "mapping fired"]
         );
     }
 
@@ -2463,6 +2645,23 @@ mappings:
         .unwrap_err()
         .to_string();
         assert!(unknown.contains("unknown command action"), "{unknown}");
+
+        let missing_run_command_line = parse_profile_bytes(
+            br#"
+id: missing-run-command-line
+mappings:
+  - from: btn:south
+    action: command
+    command: run
+"#,
+            Path::new("missing-run-command-line.yaml"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            missing_run_command_line.contains("requires command_line"),
+            "{missing_run_command_line}"
+        );
     }
 
     #[test]

@@ -12,7 +12,7 @@ use evdev::{
     KeyCode, RelativeAxisCode, UinputAbsSetup,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::process::Command;
+use std::process::{Child, Command};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -60,6 +60,7 @@ pub struct RemapRuntime {
     digital_stick_sources: HashMap<EventCode, Vec<usize>>,
     digital_stick_states: Vec<DigitalStickState>,
     relative_axis_states: HashMap<EventCode, RelativeAxisState>,
+    command_children: Vec<Child>,
     virtual_nodes: Vec<String>,
 }
 
@@ -277,6 +278,7 @@ impl RemapRuntime {
             digital_stick_sources,
             digital_stick_states,
             relative_axis_states: HashMap::new(),
+            command_children: Vec::new(),
             virtual_nodes,
         })
     }
@@ -286,6 +288,8 @@ impl RemapRuntime {
     }
 
     pub fn pump_once(&mut self) -> Result<()> {
+        self.reap_command_children();
+
         let had_events;
         let events = match self.source.fetch_events() {
             Ok(events) => {
@@ -451,7 +455,7 @@ impl RemapRuntime {
         if resolved.action == MappingAction::Command {
             if let Some(command) = resolved.command.as_ref() {
                 self.pressed_command_sources.insert(source_event);
-                self.execute_command(command.action, output);
+                self.execute_command(command, output);
             }
             return;
         }
@@ -579,7 +583,7 @@ impl RemapRuntime {
             }
             MappingAction::Command => {
                 if let Some(command) = resolved.command.as_ref() {
-                    self.execute_command(command.action, output);
+                    self.execute_command(command, output);
                 }
             }
             MappingAction::Disable => {}
@@ -834,9 +838,44 @@ impl RemapRuntime {
         }
     }
 
-    fn execute_command(&mut self, action: CommandAction, output: &mut Vec<InputEvent>) {
-        match action {
+    fn execute_command(&mut self, settings: &CommandSettings, output: &mut Vec<InputEvent>) {
+        match settings.action {
             CommandAction::StopMacros => self.stop_all_macros(output),
+            CommandAction::RunCommand => self.spawn_command(&settings.command_line),
+        }
+    }
+
+    fn spawn_command(&mut self, command_line: &[String]) {
+        if command_line.is_empty() {
+            eprintln!("PadProxy run command mapping has an empty command_line");
+            return;
+        }
+
+        match Command::new(&command_line[0])
+            .args(&command_line[1..])
+            .spawn()
+        {
+            Ok(child) => self.command_children.push(child),
+            Err(error) => eprintln!(
+                "PadProxy failed to run command mapping {}: {error}",
+                command_line.join(" ")
+            ),
+        }
+    }
+
+    fn reap_command_children(&mut self) {
+        let mut index = 0;
+        while index < self.command_children.len() {
+            match self.command_children[index].try_wait() {
+                Ok(Some(_)) => {
+                    let _ = self.command_children.remove(index);
+                }
+                Ok(None) => index += 1,
+                Err(error) => {
+                    eprintln!("PadProxy failed to reap command mapping process: {error}");
+                    let _ = self.command_children.remove(index);
+                }
+            }
         }
     }
 

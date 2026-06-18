@@ -87,7 +87,8 @@ ApplicationWindow {
         { label: "Custom", name: "custom", min: 50, max: 100 }
     ]
     property var commandActionOptions: [
-        { label: "Stop macros", command: "stop_macros" }
+        { label: "Stop macros", command: "stop_macros" },
+        { label: "Run command", command: "run_command" }
     ]
     property var eventCodes: [
         "btn:south",
@@ -857,6 +858,7 @@ ApplicationWindow {
                 activatorKind: row.activatorKind || "press",
                 macroMode: row.macroMode || "press",
                 commandAction: row.commandAction || "stop_macros",
+                commandLine: row.commandLine || "",
                 turboEnabled: row.turboEnabled === true,
                 turboIntervalMs: root.normalizedTurboInterval(row.turboIntervalMs)
             })
@@ -878,6 +880,7 @@ ApplicationWindow {
                 activatorKind: root.mappingActivatorFromProfile(mappings[i]),
                 macroMode: action === "macro" ? root.macroModeFromProfile(mappings[i]) : "press",
                 commandAction: action === "command" ? root.commandActionFromProfile(mappings[i]) : "stop_macros",
+                commandLine: action === "command" ? root.commandLineFromProfile(mappings[i]) : "",
                 turboEnabled: turbo !== null,
                 turboIntervalMs: turbo && turbo.interval_ms ? turbo.interval_ms : 75
             })
@@ -910,6 +913,14 @@ ApplicationWindow {
         return command && command.action ? command.action : "stop_macros"
     }
 
+    function commandLineFromProfile(mapping) {
+        const command = mapping && mapping.command ? mapping.command : null
+        const commandLine = command && command.command_line ? command.command_line : []
+        if (commandLine.length >= 3 && commandLine[0] === "sh" && commandLine[1] === "-c")
+            return commandLine.slice(2).join(" ")
+        return commandLine.join(" ")
+    }
+
     function setMappingRows(rows) {
         mappingsModel.clear()
         for (let i = 0; rows && i < rows.length; i++) {
@@ -920,6 +931,7 @@ ApplicationWindow {
                 activatorKind: rows[i].activatorKind || "press",
                 macroMode: rows[i].macroMode || "press",
                 commandAction: rows[i].commandAction || "stop_macros",
+                commandLine: rows[i].commandLine || "",
                 turboEnabled: rows[i].turboEnabled === true,
                 turboIntervalMs: root.normalizedTurboInterval(rows[i].turboIntervalMs)
             })
@@ -941,6 +953,10 @@ ApplicationWindow {
                 fromCode: rows[i].fromCode,
                 toCode: rows[i].toCode,
                 action: rows[i].action || "map",
+                activatorKind: rows[i].activatorKind || "press",
+                macroMode: rows[i].macroMode || "press",
+                commandAction: rows[i].commandAction || "stop_macros",
+                commandLine: rows[i].commandLine || "",
                 turboEnabled: rows[i].turboEnabled === true,
                 turboIntervalMs: root.normalizedTurboInterval(rows[i].turboIntervalMs)
             })
@@ -1128,6 +1144,7 @@ ApplicationWindow {
             activatorKind: "press",
             macroMode: "press",
             commandAction: "stop_macros",
+            commandLine: "",
             turboEnabled: false,
             turboIntervalMs: 75
         })
@@ -1269,7 +1286,14 @@ ApplicationWindow {
             text += indent + "  action: disable\n"
         } else if (action === "command") {
             text += indent + "  action: command\n"
-            text += indent + "  command: " + (row.commandAction || "stop_macros") + "\n"
+            const commandAction = row.commandAction || "stop_macros"
+            if (commandAction === "run_command") {
+                text += indent + "  command:\n"
+                text += indent + "    action: run\n"
+                text += indent + "    shell: " + yamlString(row.commandLine || "") + "\n"
+            } else {
+                text += indent + "  command: " + commandAction + "\n"
+            }
         } else if (action === "macro") {
             text += indent + "  action: macro\n"
             text += indent + "  macro:\n"
@@ -2403,8 +2427,11 @@ ApplicationWindow {
                                                 : ""
                                             if (row.action === "disable")
                                                 return prefix + activatorSuffix + " disabled"
-                                            if (row.action === "command")
+                                            if (row.action === "command") {
+                                                if (row.commandAction === "run_command")
+                                                    return prefix + activatorSuffix + " run " + (row.commandLine || "command")
                                                 return prefix + activatorSuffix + " command stop macros"
+                                            }
                                             if (row.action === "macro")
                                                 return prefix + activatorSuffix + " macro "
                                                     + (row.macroMode === "hold" ? "hold " : "tap ")
@@ -2503,6 +2530,8 @@ ApplicationWindow {
                                                         mappingsModel.setProperty(index, "activatorKind", "press")
                                                     if (nextAction === "command" && !commandAction)
                                                         mappingsModel.setProperty(index, "commandAction", "stop_macros")
+                                                    if (nextAction !== "command")
+                                                        mappingsModel.setProperty(index, "commandLine", "")
                                                 }
                                             }
 
@@ -2566,7 +2595,8 @@ ApplicationWindow {
                                                 model: root.commandActionOptions
                                                 textRole: "label"
                                                 currentIndex: root.commandActionIndex(commandAction)
-                                                Layout.fillWidth: true
+                                                Layout.fillWidth: commandAction !== "run_command"
+                                                Layout.preferredWidth: 160
                                                 visible: action === "command"
                                                 onPressedChanged: {
                                                     if (pressed)
@@ -2574,10 +2604,22 @@ ApplicationWindow {
                                                 }
                                                 onActivated: function(commandIndex) {
                                                     root.selectedMappingIndex = index
-                                                    mappingsModel.setProperty(index, "commandAction", root.commandActionAt(commandIndex))
+                                                    const nextCommand = root.commandActionAt(commandIndex)
+                                                    mappingsModel.setProperty(index, "commandAction", nextCommand)
+                                                    if (nextCommand !== "run_command")
+                                                        mappingsModel.setProperty(index, "commandLine", "")
                                                 }
                                                 ToolTip.visible: hovered
-                                                ToolTip.text: "Stop queued and held macro output"
+                                                ToolTip.text: commandAction === "run_command" ? "Run an external command without blocking remap input" : "Stop queued and held macro output"
+                                            }
+
+                                            TextField {
+                                                text: commandLine || ""
+                                                placeholderText: "command line"
+                                                visible: action === "command" && commandAction === "run_command"
+                                                Layout.fillWidth: true
+                                                onTextEdited: mappingsModel.setProperty(index, "commandLine", text)
+                                                onEditingFinished: mappingsModel.setProperty(index, "commandLine", text)
                                             }
 
                                             CheckBox {

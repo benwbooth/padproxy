@@ -54,8 +54,9 @@ Source pages consulted:
 - Mute physical input while virtual output is active.
 - Disable a source button entirely. Done for controller inputs.
 - Commands, such as turn remap off. Basic PadProxy command mappings done for
-  stopping queued and held macros.
-- Launch app / run command mappings.
+  stopping queued and held macros and running external commands.
+- Launch app / run command mappings. Basic non-blocking external command
+  launch done for controller command mappings.
 
 ## Activators
 
