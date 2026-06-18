@@ -24,6 +24,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+mod dbus;
+
 #[derive(Debug, Parser)]
 #[command(author, version, about)]
 struct Cli {
@@ -69,6 +71,7 @@ enum Command {
         #[arg(long)]
         socket: Option<PathBuf>,
     },
+    Dbus,
     Ctl {
         #[arg(long)]
         socket: Option<PathBuf>,
@@ -264,6 +267,7 @@ fn main() -> Result<()> {
             interval_ms,
         } => run_watch(&controller, interval_ms),
         Command::Serve { socket } => run_serve(socket),
+        Command::Dbus => dbus::serve_dbus(),
         Command::Ctl { socket, request } => run_ctl(socket, &request),
         Command::ListSlots { controller } => list_slots(controller.as_deref()),
         Command::AssignSlot {

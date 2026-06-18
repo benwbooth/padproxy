@@ -10,3 +10,4 @@ clap.workspace = true
 padproxy-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+zbus = "5.16.0"

@@ -192,6 +192,14 @@ Commands include `status`, `list_profiles`, `list_devices`, `list_batteries`,
 `clear_slot`, `apply_slot`), and live remap control (`apply`, `remap_off`). The
 socket defaults to `$XDG_RUNTIME_DIR/padproxy.sock`.
 
+The same JSON protocol is available over DBus on the session bus:
+
+```sh
+nix develop --command cargo run --bin padproxyctl -- dbus &
+busctl --user call com.benwbooth.PadProxy /com/benwbooth/PadProxy \
+  com.benwbooth.PadProxy1 Request s '{"cmd":"status"}'
+```
+
 Set `PADPROXY_LOG` to control structured runtime logging
 (`error`/`warn`/`info`/`debug`/`trace`/`off`, default `info`). Log lines go to
 stderr as `[<unix_ms>] <LEVEL> <target>: <message>` for remap lifecycle and

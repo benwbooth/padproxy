@@ -263,10 +263,11 @@ Joy-Cons) are tracked separately under Sensors/Grouping.
 - CLI apply/select-slot/clear-slot/remap/version/help. Basic foreground
   `remap`/`apply`, `apply-slot`, `launch`, list, slot management, version, and
   help commands done.
-- Local API/DBus service. Basic local control API done: `padproxyctl serve`
-  exposes a Unix-socket JSON API (status, list profiles/devices/batteries,
-  detect, slot management, and live apply/remap-off), and `padproxyctl ctl`
-  is a client for it. A DBus front end remains.
+- Local API/DBus service. Done: `padproxyctl serve` exposes a Unix-socket JSON
+  API (status, list profiles/devices/batteries, detect, slot management, and
+  live apply/remap-off) with `padproxyctl ctl` as a client, and `padproxyctl
+  dbus` exposes the same JSON protocol on the session bus via
+  `com.benwbooth.PadProxy1.Request`.
 - Per-emulator/game launch integration. Done: `padproxyctl launch` grabs the
   controller, applies a profile, and runs the program; `--profile` is optional
   and auto-selected by matching the launched command against profiles'
