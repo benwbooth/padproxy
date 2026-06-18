@@ -20,6 +20,8 @@ fn select_qml_file() -> String {
         if let Some(name) = args.get(index + 1) {
             match name.as_str() {
                 "crosshair" => return format!("{QML_BASE}/crosshair.qml"),
+                "radial" => return format!("{QML_BASE}/radial.qml"),
+                "layer" => return format!("{QML_BASE}/layer.qml"),
                 other => eprintln!("PadProxy: unknown overlay '{other}', showing main window"),
             }
         } else {

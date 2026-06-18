@@ -3,13 +3,17 @@ use cxx_qt_build::{CppFile, CxxQtBuilder, QmlModule};
 fn main() {
     println!("cargo:rerun-if-changed=qml/main.qml");
     println!("cargo:rerun-if-changed=qml/crosshair.qml");
+    println!("cargo:rerun-if-changed=qml/radial.qml");
+    println!("cargo:rerun-if-changed=qml/layer.qml");
     println!("cargo:rerun-if-changed=src/gui_bridge.rs");
     println!("cargo:rerun-if-changed=src/qml_registration.cpp");
 
     CxxQtBuilder::new_qml_module(
         QmlModule::new("com.benwbooth.padproxy")
             .qml_file("qml/main.qml")
-            .qml_file("qml/crosshair.qml"),
+            .qml_file("qml/crosshair.qml")
+            .qml_file("qml/radial.qml")
+            .qml_file("qml/layer.qml"),
     )
     .qrc_resources([
         "qml/images/controller-generic.svg",

@@ -215,8 +215,12 @@ Joy-Cons) are tracked separately under Sensors/Grouping.
 ## Overlays and Menus
 
 - Desktop overlay.
-- Dynamic active-layer display.
-- Radial menu.
+- Dynamic active-layer display. Basic overlay done: `padproxy --overlay layer`
+  shows an always-on-top badge with the active layer name (live backend wiring
+  pending).
+- Radial menu. Basic overlay done: `padproxy --overlay radial` shows a ring of
+  labelled command segments around a center hub (profile-command binding
+  pending).
 - Crosshair overlay. Basic crosshair done: `padproxy --overlay crosshair`
   shows a transparent, always-on-top, click-through full-screen window that
   draws a center crosshair.
