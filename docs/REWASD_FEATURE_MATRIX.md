@@ -214,7 +214,9 @@ Joy-Cons) are tracked separately under Sensors/Grouping.
 
 ## Overlays and Menus
 
-- Desktop overlay.
+- Desktop overlay. Basic overlay done: `padproxy --overlay desktop` shows an
+  always-on-top remap on/off and active-profile HUD (live backend wiring
+  pending).
 - Dynamic active-layer display. Basic overlay done: `padproxy --overlay layer`
   shows an always-on-top badge with the active layer name (live backend wiring
   pending).

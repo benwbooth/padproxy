@@ -58,13 +58,14 @@ nix develop --command cargo run --bin padproxy
 ```
 
 Show an overlay window — `crosshair` (transparent, click-through aiming
-crosshair), `radial` (a radial command menu), or `layer` (an active-layer
-badge):
+crosshair), `radial` (a radial command menu), `layer` (an active-layer badge),
+or `desktop` (a remap on/off status HUD):
 
 ```sh
 nix develop --command cargo run --bin padproxy -- --overlay crosshair
 nix develop --command cargo run --bin padproxy -- --overlay radial
 nix develop --command cargo run --bin padproxy -- --overlay layer
+nix develop --command cargo run --bin padproxy -- --overlay desktop
 ```
 
 List devices, outputs, profiles, and controller batteries:
