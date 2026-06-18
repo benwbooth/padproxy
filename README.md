@@ -94,7 +94,9 @@ fire discrete map taps, press macros, or commands; YAML can customize
 long/multi-press timing with `delay_ms`, `timeout_ms`, or `interval_ms`. The
 analog panel tunes virtual axes with deadzone, sensitivity, inversion, and
 output range controls, plus linear, soft, aggressive, and custom exponent
-response curves. Macro rows can tap a virtual button/key/mouse button from the
+response curves. Analog zone rows can hold a virtual button, keyboard key, or
+mouse button while an axis is inside a low, medium, high, or custom range.
+Macro rows can tap a virtual button/key/mouse button from the
 structured editor or hold a virtual button until the source is released; the
 raw YAML editor also supports explicit controller/keyboard/mouse button down/up
 events, relative mouse-axis events with `rel` plus `value`, axis set events,
@@ -138,6 +140,12 @@ analog:
     - code: abs:rx
       curve: custom
       curve_exponent: 0.75
+    - code: abs:rz
+      zones:
+        - name: high
+          min: 0.66
+          max: 1.00
+          to: key:space
 mappings:
   - from: btn:south
     to: btn:south

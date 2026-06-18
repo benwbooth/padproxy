@@ -80,6 +80,12 @@ ApplicationWindow {
         { label: "Aggressive", curve: "aggressive" },
         { label: "Custom", curve: "custom" }
     ]
+    property var analogZoneOptions: [
+        { label: "Low", name: "low", min: 1, max: 33 },
+        { label: "Medium", name: "medium", min: 33, max: 66 },
+        { label: "High", name: "high", min: 66, max: 100 },
+        { label: "Custom", name: "custom", min: 50, max: 100 }
+    ]
     property var commandActionOptions: [
         { label: "Stop macros", command: "stop_macros" }
     ]
@@ -415,6 +421,28 @@ ApplicationWindow {
         return root.normalizedPercent(value, 100, 25, 400)
     }
 
+    function analogZoneIndex(name) {
+        const normalized = name || "high"
+        for (let i = 0; i < root.analogZoneOptions.length; i++) {
+            if (root.analogZoneOptions[i].name === normalized)
+                return i
+        }
+        return root.analogZoneOptions.length - 1
+    }
+
+    function analogZoneAt(index) {
+        const option = root.analogZoneOptions[index]
+        return option ? option.name : "custom"
+    }
+
+    function analogZonePreset(name) {
+        return root.analogZoneOptions[root.analogZoneIndex(name)]
+    }
+
+    function normalizedZonePercent(value, fallback) {
+        return root.normalizedPercent(value, fallback, 0, 100)
+    }
+
     function commandActionIndex(command) {
         const normalized = command || "stop_macros"
         for (let i = 0; i < root.commandActionOptions.length; i++) {
@@ -459,6 +487,27 @@ ApplicationWindow {
         return 32767
     }
 
+    function analogAxisExists(code) {
+        for (let i = 0; i < analogModel.count; i++) {
+            if (analogModel.get(i).code === code)
+                return true
+        }
+        return false
+    }
+
+    function ensureAnalogAxis(code) {
+        if (!root.analogAxisExists(code))
+            root.addAnalogAxis(code)
+    }
+
+    function removeAnalogAxis(axisIndex, axisCode) {
+        analogModel.remove(axisIndex)
+        for (let i = analogZonesModel.count - 1; i >= 0; i--) {
+            if (analogZonesModel.get(i).axisCode === axisCode)
+                analogZonesModel.remove(i)
+        }
+    }
+
     function addAnalogAxis(code) {
         let axisCode = code || ""
         if (axisCode.length === 0) {
@@ -490,8 +539,26 @@ ApplicationWindow {
         })
     }
 
+    function addAnalogZone(axisCode) {
+        let code = axisCode || ""
+        if (code.length === 0) {
+            if (analogModel.count === 0)
+                root.addAnalogAxis("abs:z")
+            code = analogModel.count > 0 ? analogModel.get(0).code : "abs:z"
+        }
+        root.ensureAnalogAxis(code)
+        analogZonesModel.append({
+            axisCode: code,
+            zoneName: "high",
+            zoneMinPercent: 66,
+            zoneMaxPercent: 100,
+            targetCode: "btn:south"
+        })
+    }
+
     function loadAnalogSettings(analog) {
         analogModel.clear()
+        analogZonesModel.clear()
         const axes = analog && analog.axes ? analog.axes : []
         for (let i = 0; i < axes.length; i++) {
             const axisCode = axes[i].code_name || axes[i].code || "abs:x"
@@ -507,6 +574,18 @@ ApplicationWindow {
                 outputMin: axes[i].output_min !== undefined ? axes[i].output_min : root.analogRangeMin(axisCode),
                 outputMax: axes[i].output_max !== undefined ? axes[i].output_max : root.analogRangeMax(axisCode)
             })
+            const zones = axes[i].zones || []
+            for (let zoneIndex = 0; zoneIndex < zones.length; zoneIndex++) {
+                const zoneName = zones[zoneIndex].name || "custom"
+                const preset = root.analogZonePreset(zoneName)
+                analogZonesModel.append({
+                    axisCode: axisCode,
+                    zoneName: zoneName,
+                    zoneMinPercent: root.normalizedZonePercent((zones[zoneIndex].min !== undefined ? zones[zoneIndex].min * 100 : preset.min), preset.min),
+                    zoneMaxPercent: root.normalizedZonePercent((zones[zoneIndex].max !== undefined ? zones[zoneIndex].max * 100 : preset.max), preset.max),
+                    targetCode: zones[zoneIndex].target_name || zones[zoneIndex].to || "btn:south"
+                })
+            }
         }
     }
 
@@ -531,6 +610,22 @@ ApplicationWindow {
             text += "      invert: " + (row.invert === true ? "true" : "false") + "\n"
             text += "      output_min: " + (row.outputMin !== undefined ? row.outputMin : root.analogRangeMin(code)) + "\n"
             text += "      output_max: " + (row.outputMax !== undefined ? row.outputMax : root.analogRangeMax(code)) + "\n"
+            let zoneText = ""
+            for (let zoneIndex = 0; zoneIndex < analogZonesModel.count; zoneIndex++) {
+                const zone = analogZonesModel.get(zoneIndex)
+                if (zone.axisCode !== code)
+                    continue
+                const minPercent = Math.min(99, root.normalizedZonePercent(zone.zoneMinPercent, 66))
+                const maxPercent = Math.max(minPercent + 1, root.normalizedZonePercent(zone.zoneMaxPercent, 100))
+                zoneText += "        - name: " + (zone.zoneName || "custom") + "\n"
+                zoneText += "          min: " + (minPercent / 100).toFixed(2) + "\n"
+                zoneText += "          max: " + (maxPercent / 100).toFixed(2) + "\n"
+                zoneText += "          to: " + (zone.targetCode || "btn:south") + "\n"
+            }
+            if (zoneText.length > 0) {
+                text += "      zones:\n"
+                text += zoneText
+            }
         }
         return text
     }
@@ -904,6 +999,7 @@ ApplicationWindow {
             { fromCode: "btn:east", toCode: "btn:west" }
         ])
         analogModel.clear()
+        analogZonesModel.clear()
         backend.new_profile()
     }
 
@@ -1073,6 +1169,10 @@ ApplicationWindow {
 
     ListModel {
         id: analogModel
+    }
+
+    ListModel {
+        id: analogZonesModel
     }
 
     Timer {
@@ -1520,7 +1620,7 @@ ApplicationWindow {
 
                                                     Button {
                                                         text: "Remove"
-                                                        onClicked: analogModel.remove(index)
+                                                        onClicked: root.removeAnalogAxis(index, code)
                                                     }
                                                 }
 
@@ -1609,6 +1709,126 @@ ApplicationWindow {
                                                         Layout.fillWidth: true
                                                         onValueModified: analogModel.setProperty(index, "outputMax", value)
                                                     }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            Frame {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: Math.max(150, analogZonesModel.count * 54 + 58)
+
+                                ColumnLayout {
+                                    anchors.fill: parent
+                                    spacing: 8
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+
+                                        Label {
+                                            text: "Analog Zones"
+                                            font.bold: true
+                                        }
+
+                                        Item {
+                                            Layout.fillWidth: true
+                                        }
+
+                                        Button {
+                                            text: "Add Zone"
+                                            onClicked: root.addAnalogZone("")
+                                        }
+                                    }
+
+                                    ListView {
+                                        id: analogZonesList
+                                        Layout.fillWidth: true
+                                        Layout.fillHeight: true
+                                        clip: true
+                                        model: analogZonesModel
+
+                                        delegate: Rectangle {
+                                            width: ListView.view.width
+                                            height: 48
+                                            color: index % 2 === 0 ? "#1d232b" : "transparent"
+                                            radius: 4
+
+                                            RowLayout {
+                                                anchors.fill: parent
+                                                anchors.margins: 4
+                                                spacing: 8
+
+                                                ComboBox {
+                                                    model: root.analogAxisCodes
+                                                    currentIndex: Math.max(0, root.analogAxisCodes.indexOf(axisCode))
+                                                    Layout.preferredWidth: 120
+                                                    onActivated: {
+                                                        analogZonesModel.setProperty(index, "axisCode", currentText)
+                                                        root.ensureAnalogAxis(currentText)
+                                                    }
+                                                    ToolTip.visible: hovered
+                                                    ToolTip.text: root.eventLabel(currentText)
+                                                }
+
+                                                ComboBox {
+                                                    model: root.analogZoneOptions
+                                                    textRole: "label"
+                                                    currentIndex: root.analogZoneIndex(zoneName)
+                                                    Layout.preferredWidth: 118
+                                                    onActivated: function(zoneIndex) {
+                                                        const option = root.analogZoneOptions[zoneIndex]
+                                                        if (!option)
+                                                            return
+                                                        analogZonesModel.setProperty(index, "zoneName", option.name)
+                                                        analogZonesModel.setProperty(index, "zoneMinPercent", option.min)
+                                                        analogZonesModel.setProperty(index, "zoneMaxPercent", option.max)
+                                                    }
+                                                }
+
+                                                Label {
+                                                    text: "Min"
+                                                    Layout.preferredWidth: 28
+                                                    horizontalAlignment: Text.AlignRight
+                                                }
+
+                                                SpinBox {
+                                                    from: 0
+                                                    to: 99
+                                                    editable: true
+                                                    value: Math.min(99, root.normalizedZonePercent(zoneMinPercent, 66))
+                                                    Layout.preferredWidth: 82
+                                                    onValueModified: analogZonesModel.setProperty(index, "zoneMinPercent", value)
+                                                }
+
+                                                Label {
+                                                    text: "Max"
+                                                    Layout.preferredWidth: 32
+                                                    horizontalAlignment: Text.AlignRight
+                                                }
+
+                                                SpinBox {
+                                                    from: 1
+                                                    to: 100
+                                                    editable: true
+                                                    value: root.normalizedZonePercent(zoneMaxPercent, 100)
+                                                    Layout.preferredWidth: 82
+                                                    onValueModified: analogZonesModel.setProperty(index, "zoneMaxPercent", value)
+                                                }
+
+                                                ComboBox {
+                                                    model: root.keyEventCodes
+                                                    currentIndex: Math.max(0, root.keyEventCodes.indexOf(targetCode))
+                                                    Layout.fillWidth: true
+                                                    onActivated: analogZonesModel.setProperty(index, "targetCode", currentText)
+                                                    ToolTip.visible: hovered
+                                                    ToolTip.text: root.eventLabel(currentText)
+                                                }
+
+                                                Button {
+                                                    text: "Remove"
+                                                    onClicked: analogZonesModel.remove(index)
                                                 }
                                             }
                                         }

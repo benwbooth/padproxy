@@ -99,8 +99,9 @@ Source pages consulted:
 ## Analog Controls
 
 - Stick deadzones. Basic per-axis deadzone done.
-- Trigger zones.
-- Low, medium, and high zone mappings.
+- Trigger zones. Basic held-output axis zones done.
+- Low, medium, and high zone mappings. Basic button/key/mouse-button zone
+  outputs done.
 - Stick response curves. Basic linear/soft/aggressive response curves done.
 - Custom response curves. Basic YAML/UI custom exponent curve done.
 - Axis inversion. Basic per-axis inversion done.
@@ -192,5 +193,5 @@ Source pages consulted:
 4. Add remap ON/OFF/apply lifecycle from the GUI. Done.
 5. Add virtual output type selection and hide/grab policy controls. Done for implemented outputs; planned outputs are visible but disabled until their virtual-device backends exist.
 6. Add layers, then activators, then macros. Basic main/shift layers are done with hold/toggle activation, disable mappings, held-button turbo, press/release/long/double/triple controller activators, press-triggered controller/keyboard/mouse-button macros, relative mouse macro events, and hold-until-release controller macros; richer activators and macros remain.
-7. Add analog tuning. Basic per-axis deadzone, sensitivity, response curves, custom curve exponent, inversion, and output range are done.
+7. Add analog tuning. Basic per-axis deadzone, sensitivity, response curves, custom curve exponent, held-output zones, inversion, and output range are done.
 8. Add process autodetect and Lunchbox integration.

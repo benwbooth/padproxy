@@ -142,6 +142,7 @@ pub struct AnalogTuning {
     pub invert: bool,
     pub output_min: i32,
     pub output_max: i32,
+    pub zones: Vec<AnalogZoneMapping>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -151,6 +152,15 @@ pub enum AnalogCurve {
     Soft,
     Aggressive,
     Custom,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct AnalogZoneMapping {
+    pub name: String,
+    pub min: f64,
+    pub max: f64,
+    pub target: EventCode,
+    pub target_name: String,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -310,6 +320,19 @@ struct RawAnalogTuning {
     output_max: Option<i32>,
     min: Option<i32>,
     max: Option<i32>,
+    zones: Option<Vec<RawAnalogZoneMapping>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawAnalogZoneMapping {
+    name: Option<String>,
+    zone: Option<String>,
+    to: Option<String>,
+    target: Option<String>,
+    output: Option<String>,
+    min: Option<f64>,
+    max: Option<f64>,
+    threshold: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -554,6 +577,39 @@ impl AnalogTuning {
         scaled.clamp(self.output_min, self.output_max)
     }
 
+    pub fn zone_position(&self, value: i32) -> f64 {
+        let Some(range) = AxisRange::for_event(self.code) else {
+            return 0.0;
+        };
+        let normalized = normalize_axis_value(range, value);
+        let magnitude = if range.centered {
+            normalized.abs()
+        } else {
+            normalized
+        };
+        let deadzone = self.deadzone.clamp(0.0, 0.99);
+        if magnitude <= deadzone {
+            0.0
+        } else {
+            ((magnitude - deadzone) / (1.0 - deadzone)).clamp(0.0, 1.0)
+        }
+    }
+
+    pub fn active_zone_indexes(&self, value: i32) -> Vec<usize> {
+        let position = self.zone_position(value);
+        self.zones
+            .iter()
+            .enumerate()
+            .filter_map(|(index, zone)| {
+                if zone.contains(position) {
+                    Some(index)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
     fn apply_curve(&self, value: f64, centered: bool) -> f64 {
         let exponent = match self.curve {
             AnalogCurve::Linear => 1.0,
@@ -568,6 +624,12 @@ impl AnalogTuning {
         } else {
             value.clamp(0.0, 1.0).powf(exponent)
         }
+    }
+}
+
+impl AnalogZoneMapping {
+    pub fn contains(&self, position: f64) -> bool {
+        position >= self.min && (position < self.max || self.max >= 1.0 && position <= self.max)
     }
 }
 
@@ -600,6 +662,24 @@ impl AxisRange {
                 max: 32767,
                 centered: true,
             }),
+        }
+    }
+}
+
+fn normalize_axis_value(range: AxisRange, value: i32) -> f64 {
+    if range.centered {
+        let max_abs = range.max.unsigned_abs().max(range.min.unsigned_abs()) as f64;
+        if max_abs == 0.0 {
+            0.0
+        } else {
+            (value as f64 / max_abs).clamp(-1.0, 1.0)
+        }
+    } else {
+        let span = (range.max - range.min) as f64;
+        if span == 0.0 {
+            0.0
+        } else {
+            ((value - range.min) as f64 / span).clamp(0.0, 1.0)
         }
     }
 }
@@ -1461,6 +1541,7 @@ fn parse_analog_settings(raw: Option<RawAnalogSettings>) -> Result<AnalogSetting
                 range.max
             ));
         }
+        let zones = parse_analog_zones(axis.zones, &axis.code)?;
 
         axes.push(AnalogTuning {
             code,
@@ -1472,6 +1553,7 @@ fn parse_analog_settings(raw: Option<RawAnalogSettings>) -> Result<AnalogSetting
             invert: axis.invert.unwrap_or(false),
             output_min,
             output_max,
+            zones,
         });
     }
 
@@ -1529,6 +1611,72 @@ fn parse_analog_curve(
     }
 
     Ok((curve, curve_exponent))
+}
+
+fn parse_analog_zones(
+    raw_zones: Option<Vec<RawAnalogZoneMapping>>,
+    axis_name: &str,
+) -> Result<Vec<AnalogZoneMapping>> {
+    let mut zones = Vec::new();
+    for raw in raw_zones.unwrap_or_default() {
+        let name = raw.name.or(raw.zone).unwrap_or_else(|| {
+            if raw.min.is_some() || raw.max.is_some() || raw.threshold.is_some() {
+                "custom".to_string()
+            } else {
+                "high".to_string()
+            }
+        });
+        let normalized_name = normalize_mapping_keyword(&name);
+        let (default_min, default_max) = analog_zone_default_range(&normalized_name)?;
+        let min = raw.threshold.or(raw.min).unwrap_or(default_min);
+        let max = raw.max.unwrap_or(default_max);
+        if !(0.0..=1.0).contains(&min) || !(0.0..=1.0).contains(&max) || min >= max {
+            return Err(anyhow!(
+                "analog zone {normalized_name} for {axis_name} must use min/max between 0.0 and 1.0"
+            ));
+        }
+
+        let target_value =
+            raw.to.or(raw.target).or(raw.output).ok_or_else(|| {
+                anyhow!("analog zone {normalized_name} for {axis_name} requires to")
+            })?;
+        let target = parse_event_code(&target_value)
+            .ok_or_else(|| anyhow!("unknown analog zone target {target_value} for {axis_name}"))?;
+        if !virtual_output_supports(target) || target.kind != EventKind::Key {
+            return Err(anyhow!(
+                "analog zone target {} for {axis_name} must be a virtual button, keyboard key, or mouse button",
+                target.name()
+            ));
+        }
+        if zones
+            .iter()
+            .any(|existing: &AnalogZoneMapping| existing.target == target)
+        {
+            return Err(anyhow!(
+                "duplicate analog zone target {} for {axis_name}",
+                target.name()
+            ));
+        }
+
+        zones.push(AnalogZoneMapping {
+            name: normalized_name,
+            min,
+            max,
+            target,
+            target_name: target.name(),
+        });
+    }
+    Ok(zones)
+}
+
+fn analog_zone_default_range(name: &str) -> Result<(f64, f64)> {
+    match name {
+        "low" => Ok((0.01, 0.33)),
+        "medium" | "mid" => Ok((0.33, 0.66)),
+        "high" => Ok((0.66, 1.0)),
+        "custom" => Ok((0.5, 1.0)),
+        other => Err(anyhow!("unknown analog zone {other}")),
+    }
 }
 
 fn parse_layer_activation(raw: RawLayerActivation, layer_id: &str) -> Result<LayerActivation> {
@@ -2264,6 +2412,12 @@ analog:
       curve: custom
       curve_exponent: 0.75
       max: 200
+      zones:
+        - name: low
+          to: btn:south
+        - name: high
+          min: 0.70
+          to: key:space
 "#,
             Path::new("analog.yaml"),
         )
@@ -2280,6 +2434,11 @@ analog:
         assert_eq!(profile.analog.axes[1].code_name, "abs:z");
         assert_eq!(profile.analog.axes[1].curve, AnalogCurve::Custom);
         assert_eq!(profile.analog.axes[1].curve_exponent, 0.75);
+        assert_eq!(profile.analog.axes[1].zones.len(), 2);
+        assert_eq!(profile.analog.axes[1].zones[0].name, "low");
+        assert_eq!(profile.analog.axes[1].zones[0].target_name, "btn:south");
+        assert_eq!(profile.analog.axes[1].zones[1].min, 0.70);
+        assert_eq!(profile.analog.axes[1].zones[1].target_name, "key:space");
         assert_eq!(profile.analog.tuning_table().len(), 2);
     }
 
@@ -2341,6 +2500,40 @@ analog:
         .unwrap_err()
         .to_string();
         assert!(error.contains("requires curve: custom"), "{error}");
+
+        let error = parse_profile_bytes(
+            br#"
+id: bad-zone-target
+analog:
+  axes:
+    - code: abs:z
+      zones:
+        - name: high
+          to: rel:x
+"#,
+            Path::new("bad-zone-target.yaml"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("virtual button"), "{error}");
+
+        let error = parse_profile_bytes(
+            br#"
+id: bad-zone-range
+analog:
+  axes:
+    - code: abs:z
+      zones:
+        - name: custom
+          min: 0.8
+          max: 0.2
+          to: btn:south
+"#,
+            Path::new("bad-zone-range.yaml"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("min/max"), "{error}");
     }
 
     #[test]
@@ -2355,6 +2548,7 @@ analog:
             invert: true,
             output_min: -20000,
             output_max: 20000,
+            zones: Vec::new(),
         };
         assert_eq!(stick.apply(3000), 0);
         assert!(stick.apply(16_384) < -18_000);
@@ -2370,9 +2564,28 @@ analog:
             invert: false,
             output_min: 0,
             output_max: 200,
+            zones: vec![
+                super::AnalogZoneMapping {
+                    name: "low".to_string(),
+                    min: 0.01,
+                    max: 0.33,
+                    target: parse_event_code("btn:south").unwrap(),
+                    target_name: "btn:south".to_string(),
+                },
+                super::AnalogZoneMapping {
+                    name: "high".to_string(),
+                    min: 0.66,
+                    max: 1.0,
+                    target: parse_event_code("key:space").unwrap(),
+                    target_name: "key:space".to_string(),
+                },
+            ],
         };
         assert_eq!(trigger.apply(10), 0);
         assert_eq!(trigger.apply(255), 200);
+        assert!(trigger.active_zone_indexes(10).is_empty());
+        assert_eq!(trigger.active_zone_indexes(80), vec![0]);
+        assert_eq!(trigger.active_zone_indexes(255), vec![1]);
 
         let aggressive = AnalogTuning {
             code: parse_event_code("abs:x").unwrap(),
@@ -2384,6 +2597,7 @@ analog:
             invert: false,
             output_min: -32768,
             output_max: 32767,
+            zones: Vec::new(),
         };
         assert!(aggressive.apply(16_384) < 10_000);
 

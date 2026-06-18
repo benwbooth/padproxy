@@ -50,6 +50,7 @@ pub struct RemapRuntime {
     turbo_states: HashMap<EventCode, TurboState>,
     pending_activators: HashMap<EventCode, PendingActivator>,
     analog_tuning: HashMap<EventCode, AnalogTuning>,
+    active_analog_zones: HashSet<(EventCode, usize)>,
     virtual_nodes: Vec<String>,
 }
 
@@ -197,6 +198,7 @@ impl RemapRuntime {
             turbo_states: HashMap::new(),
             pending_activators: HashMap::new(),
             analog_tuning,
+            active_analog_zones: HashSet::new(),
             virtual_nodes,
         })
     }
@@ -517,12 +519,13 @@ impl RemapRuntime {
     }
 
     fn push_mapped_absolute_event(
-        &self,
+        &mut self,
         source_event: EventCode,
         value: i32,
         output: &mut Vec<InputEvent>,
     ) {
         let resolved = self.resolved_mapping(source_event);
+        self.push_analog_zone_events(source_event, resolved.target, value, output);
         if resolved.action != MappingAction::Map
             || (!self.profile.passthrough && !resolved.mapped)
             || !virtual_output_supports(resolved.target)
@@ -531,6 +534,44 @@ impl RemapRuntime {
         }
         let value = self.apply_analog_tuning(source_event, resolved.target, value);
         push_input_event(output, resolved.target, value);
+    }
+
+    fn push_analog_zone_events(
+        &mut self,
+        source_event: EventCode,
+        target_event: EventCode,
+        value: i32,
+        output: &mut Vec<InputEvent>,
+    ) {
+        let Some(tuning) = self
+            .analog_tuning
+            .get(&target_event)
+            .or_else(|| self.analog_tuning.get(&source_event))
+        else {
+            return;
+        };
+        if tuning.zones.is_empty() {
+            return;
+        }
+
+        let axis = tuning.code;
+        let active_indexes = tuning
+            .active_zone_indexes(value)
+            .into_iter()
+            .collect::<HashSet<_>>();
+        let zones = tuning.zones.clone();
+        for (index, zone) in zones.iter().enumerate() {
+            let key = (axis, index);
+            let active = active_indexes.contains(&index);
+            let was_active = self.active_analog_zones.contains(&key);
+            if active && !was_active {
+                self.active_analog_zones.insert(key);
+                push_input_event(output, zone.target, 1);
+            } else if !active && was_active {
+                self.active_analog_zones.remove(&key);
+                push_input_event(output, zone.target, 0);
+            }
+        }
     }
 
     fn enqueue_macro_sequence(&mut self, events: &[MacroEvent]) {
@@ -832,5 +873,37 @@ fn profile_output_events(profile: &Profile) -> HashSet<EventCode> {
             }
         }
     }
+    for axis in &profile.analog.axes {
+        events.extend(axis.zones.iter().map(|zone| zone.target));
+    }
     events
+}
+
+#[cfg(test)]
+mod tests {
+    use super::profile_output_events;
+    use crate::event_code::parse_event_code;
+    use crate::profiles::parse_profile_bytes;
+    use std::path::Path;
+
+    #[test]
+    fn analog_zone_targets_are_virtual_output_capabilities() {
+        let profile = parse_profile_bytes(
+            br#"
+id: zone-output
+analog:
+  axes:
+    - code: abs:z
+      zones:
+        - name: high
+          to: key:space
+mappings: []
+"#,
+            Path::new("zone-output.yaml"),
+        )
+        .unwrap();
+
+        let events = profile_output_events(&profile);
+        assert!(events.contains(&parse_event_code("key:space").unwrap()));
+    }
 }
