@@ -74,6 +74,12 @@ ApplicationWindow {
         { label: "Double", kind: "double_press" },
         { label: "Triple", kind: "triple_press" }
     ]
+    property var analogCurveOptions: [
+        { label: "Linear", curve: "linear" },
+        { label: "Soft", curve: "soft" },
+        { label: "Aggressive", curve: "aggressive" },
+        { label: "Custom", curve: "custom" }
+    ]
     property var commandActionOptions: [
         { label: "Stop macros", command: "stop_macros" }
     ]
@@ -383,6 +389,32 @@ ApplicationWindow {
         return option ? option.label.toLowerCase() : "press"
     }
 
+    function analogCurveIndex(curve) {
+        const normalized = curve || "linear"
+        for (let i = 0; i < root.analogCurveOptions.length; i++) {
+            if (root.analogCurveOptions[i].curve === normalized)
+                return i
+        }
+        return 0
+    }
+
+    function analogCurveAt(index) {
+        const option = root.analogCurveOptions[index]
+        return option ? option.curve : "linear"
+    }
+
+    function defaultAnalogCurveExponent(curve) {
+        if (curve === "soft")
+            return 0.5
+        if (curve === "aggressive")
+            return 2.0
+        return 1.0
+    }
+
+    function normalizedCurveExponentPercent(value) {
+        return root.normalizedPercent(value, 100, 25, 400)
+    }
+
     function commandActionIndex(command) {
         const normalized = command || "stop_macros"
         for (let i = 0; i < root.commandActionOptions.length; i++) {
@@ -450,6 +482,8 @@ ApplicationWindow {
             code: axisCode,
             deadzonePercent: 0,
             sensitivityPercent: 100,
+            curveKind: "linear",
+            curveExponentPercent: 100,
             invert: false,
             outputMin: root.analogRangeMin(axisCode),
             outputMax: root.analogRangeMax(axisCode)
@@ -461,10 +495,14 @@ ApplicationWindow {
         const axes = analog && analog.axes ? analog.axes : []
         for (let i = 0; i < axes.length; i++) {
             const axisCode = axes[i].code_name || axes[i].code || "abs:x"
+            const curveKind = axes[i].curve || "linear"
+            const defaultExponent = root.defaultAnalogCurveExponent(curveKind)
             analogModel.append({
                 code: axisCode,
                 deadzonePercent: root.normalizedPercent((axes[i].deadzone || 0) * 100, 0, 0, 99),
                 sensitivityPercent: root.normalizedPercent((axes[i].sensitivity || 1) * 100, 100, 1, 400),
+                curveKind: curveKind,
+                curveExponentPercent: root.normalizedCurveExponentPercent((axes[i].curve_exponent || defaultExponent) * 100),
                 invert: axes[i].invert === true,
                 outputMin: axes[i].output_min !== undefined ? axes[i].output_min : root.analogRangeMin(axisCode),
                 outputMax: axes[i].output_max !== undefined ? axes[i].output_max : root.analogRangeMax(axisCode)
@@ -484,6 +522,12 @@ ApplicationWindow {
             text += "    - code: " + code + "\n"
             text += "      deadzone: " + (root.normalizedPercent(row.deadzonePercent, 0, 0, 99) / 100).toFixed(2) + "\n"
             text += "      sensitivity: " + (root.normalizedPercent(row.sensitivityPercent, 100, 1, 400) / 100).toFixed(2) + "\n"
+            const curveKind = row.curveKind || "linear"
+            if (curveKind !== "linear") {
+                text += "      curve: " + curveKind + "\n"
+                if (curveKind === "custom")
+                    text += "      curve_exponent: " + (root.normalizedCurveExponentPercent(row.curveExponentPercent) / 100).toFixed(2) + "\n"
+            }
             text += "      invert: " + (row.invert === true ? "true" : "false") + "\n"
             text += "      output_min: " + (row.outputMin !== undefined ? row.outputMin : root.analogRangeMin(code)) + "\n"
             text += "      output_max: " + (row.outputMax !== undefined ? row.outputMax : root.analogRangeMax(code)) + "\n"
@@ -1453,6 +1497,20 @@ ApplicationWindow {
                                                         ToolTip.text: root.eventLabel(currentText)
                                                     }
 
+                                                    ComboBox {
+                                                        model: root.analogCurveOptions
+                                                        textRole: "label"
+                                                        currentIndex: root.analogCurveIndex(curveKind)
+                                                        Layout.preferredWidth: 132
+                                                        onActivated: function(curveIndex) {
+                                                            const nextCurve = root.analogCurveAt(curveIndex)
+                                                            analogModel.setProperty(index, "curveKind", nextCurve)
+                                                            analogModel.setProperty(index, "curveExponentPercent", Math.round(root.defaultAnalogCurveExponent(nextCurve) * 100))
+                                                        }
+                                                        ToolTip.visible: hovered
+                                                        ToolTip.text: "Response curve"
+                                                    }
+
                                                     CheckBox {
                                                         text: "Invert"
                                                         checked: invert === true
@@ -1498,6 +1556,23 @@ ApplicationWindow {
                                                         value: root.normalizedPercent(sensitivityPercent, 100, 1, 400)
                                                         Layout.fillWidth: true
                                                         onValueModified: analogModel.setProperty(index, "sensitivityPercent", value)
+                                                    }
+
+                                                    Label {
+                                                        text: "Exp"
+                                                        visible: curveKind === "custom"
+                                                        Layout.preferredWidth: visible ? 34 : 0
+                                                        horizontalAlignment: Text.AlignRight
+                                                    }
+
+                                                    SpinBox {
+                                                        from: 25
+                                                        to: 400
+                                                        editable: true
+                                                        visible: curveKind === "custom"
+                                                        value: root.normalizedCurveExponentPercent(curveExponentPercent)
+                                                        Layout.preferredWidth: visible ? 96 : 0
+                                                        onValueModified: analogModel.setProperty(index, "curveExponentPercent", value)
                                                     }
                                                 }
 

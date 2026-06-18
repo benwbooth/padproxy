@@ -93,15 +93,16 @@ press, release, long press, double press, or triple press. Non-press activators
 fire discrete map taps, press macros, or commands; YAML can customize
 long/multi-press timing with `delay_ms`, `timeout_ms`, or `interval_ms`. The
 analog panel tunes virtual axes with deadzone, sensitivity, inversion, and
-output range controls. Macro rows can tap a virtual button/key/mouse button
-from the structured editor or hold a virtual button until the source is
-released; the raw YAML editor also supports explicit controller/keyboard/mouse
-button down/up events, relative mouse-axis events with `rel` plus `value`, axis
-set events, release-side events, and pauses. Command rows can run PadProxy
-commands such as stopping queued and held macro output. The editor shows
-implemented and planned virtual outputs, but only implemented outputs can be
-applied. `Apply` starts a background remap using the selected controller and
-current profile contents; `Remap Off` stops it and removes the virtual
+output range controls, plus linear, soft, aggressive, and custom exponent
+response curves. Macro rows can tap a virtual button/key/mouse button from the
+structured editor or hold a virtual button until the source is released; the
+raw YAML editor also supports explicit controller/keyboard/mouse button down/up
+events, relative mouse-axis events with `rel` plus `value`, axis set events,
+release-side events, and pauses. Command rows can run PadProxy commands such as
+stopping queued and held macro output. The editor shows implemented and planned
+virtual outputs, but only implemented outputs can be applied. `Apply` starts a
+background remap using the selected controller and current profile contents;
+`Remap Off` stops it and removes the virtual
 controller. The `YAML` tab remains available for raw edits. `Save` writes the
 result to
 `~/.config/padproxy/profiles.d`. Packaged profiles are read-only; saving one
@@ -130,9 +131,13 @@ analog:
     - code: abs:x
       deadzone: 0.15
       sensitivity: 1.25
+      curve: aggressive
       invert: false
       output_min: -32768
       output_max: 32767
+    - code: abs:rx
+      curve: custom
+      curve_exponent: 0.75
 mappings:
   - from: btn:south
     to: btn:south

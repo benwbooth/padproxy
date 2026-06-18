@@ -137,9 +137,20 @@ pub struct AnalogTuning {
     pub code_name: String,
     pub deadzone: f64,
     pub sensitivity: f64,
+    pub curve: AnalogCurve,
+    pub curve_exponent: f64,
     pub invert: bool,
     pub output_min: i32,
     pub output_max: i32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AnalogCurve {
+    Linear,
+    Soft,
+    Aggressive,
+    Custom,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -291,6 +302,9 @@ struct RawAnalogTuning {
     code: String,
     deadzone: Option<f64>,
     sensitivity: Option<f64>,
+    curve: Option<String>,
+    curve_exponent: Option<f64>,
+    exponent: Option<f64>,
     invert: Option<bool>,
     output_min: Option<i32>,
     output_max: Option<i32>,
@@ -513,6 +527,7 @@ impl AnalogTuning {
             (normalized - deadzone) / (1.0 - deadzone)
         };
 
+        adjusted = self.apply_curve(adjusted, range.centered);
         adjusted *= self.sensitivity;
         adjusted = if range.centered {
             adjusted.clamp(-1.0, 1.0)
@@ -537,6 +552,22 @@ impl AnalogTuning {
         };
 
         scaled.clamp(self.output_min, self.output_max)
+    }
+
+    fn apply_curve(&self, value: f64, centered: bool) -> f64 {
+        let exponent = match self.curve {
+            AnalogCurve::Linear => 1.0,
+            AnalogCurve::Soft => 0.5,
+            AnalogCurve::Aggressive => 2.0,
+            AnalogCurve::Custom => self.curve_exponent,
+        }
+        .clamp(0.25, 4.0);
+
+        if centered {
+            value.signum() * value.abs().powf(exponent)
+        } else {
+            value.clamp(0.0, 1.0).powf(exponent)
+        }
     }
 }
 
@@ -1414,6 +1445,11 @@ fn parse_analog_settings(raw: Option<RawAnalogSettings>) -> Result<AnalogSetting
                 axis.code
             ));
         }
+        let (curve, curve_exponent) = parse_analog_curve(
+            axis.curve.as_deref(),
+            axis.curve_exponent.or(axis.exponent),
+            &axis.code,
+        )?;
 
         let output_min = axis.output_min.or(axis.min).unwrap_or(range.min);
         let output_max = axis.output_max.or(axis.max).unwrap_or(range.max);
@@ -1431,6 +1467,8 @@ fn parse_analog_settings(raw: Option<RawAnalogSettings>) -> Result<AnalogSetting
             code_name: code.name(),
             deadzone,
             sensitivity,
+            curve,
+            curve_exponent,
             invert: axis.invert.unwrap_or(false),
             output_min,
             output_max,
@@ -1438,6 +1476,59 @@ fn parse_analog_settings(raw: Option<RawAnalogSettings>) -> Result<AnalogSetting
     }
 
     Ok(AnalogSettings { axes })
+}
+
+fn parse_analog_curve(
+    curve: Option<&str>,
+    exponent: Option<f64>,
+    axis_name: &str,
+) -> Result<(AnalogCurve, f64)> {
+    let curve = match curve.map(normalize_mapping_keyword).as_deref() {
+        None if exponent.is_some() => AnalogCurve::Custom,
+        None | Some("linear") | Some("default") => AnalogCurve::Linear,
+        Some("soft") | Some("smooth") | Some("relaxed") => AnalogCurve::Soft,
+        Some("aggressive") | Some("precise") | Some("exponential") => AnalogCurve::Aggressive,
+        Some("custom") => AnalogCurve::Custom,
+        Some(other) => return Err(anyhow!("unknown analog curve {other} for {axis_name}")),
+    };
+
+    let curve_exponent = match curve {
+        AnalogCurve::Linear => {
+            if exponent.is_some() {
+                return Err(anyhow!(
+                    "analog curve_exponent for {axis_name} requires curve: custom"
+                ));
+            }
+            1.0
+        }
+        AnalogCurve::Soft => {
+            if exponent.is_some() {
+                return Err(anyhow!(
+                    "analog curve_exponent for {axis_name} requires curve: custom"
+                ));
+            }
+            0.5
+        }
+        AnalogCurve::Aggressive => {
+            if exponent.is_some() {
+                return Err(anyhow!(
+                    "analog curve_exponent for {axis_name} requires curve: custom"
+                ));
+            }
+            2.0
+        }
+        AnalogCurve::Custom => exponent.ok_or_else(|| {
+            anyhow!("custom analog curve for {axis_name} requires curve_exponent")
+        })?,
+    };
+
+    if !(0.25..=4.0).contains(&curve_exponent) {
+        return Err(anyhow!(
+            "analog curve_exponent for {axis_name} must be between 0.25 and 4.0"
+        ));
+    }
+
+    Ok((curve, curve_exponent))
 }
 
 fn parse_layer_activation(raw: RawLayerActivation, layer_id: &str) -> Result<LayerActivation> {
@@ -1518,9 +1609,9 @@ mod tests {
     use crate::event_code::parse_event_code;
 
     use super::{
-        parse_profile_bytes, ActivatorKind, AnalogTuning, CommandAction, LayerActivationMode,
-        MacroEventKind, MacroMode, MappingAction, DEFAULT_LONG_PRESS_MS, DEFAULT_MULTI_PRESS_MS,
-        DEFAULT_TURBO_INTERVAL_MS, MAIN_LAYER_ID, MAX_SHIFT_LAYERS,
+        parse_profile_bytes, ActivatorKind, AnalogCurve, AnalogTuning, CommandAction,
+        LayerActivationMode, MacroEventKind, MacroMode, MappingAction, DEFAULT_LONG_PRESS_MS,
+        DEFAULT_MULTI_PRESS_MS, DEFAULT_TURBO_INTERVAL_MS, MAIN_LAYER_ID, MAX_SHIFT_LAYERS,
     };
     use std::path::Path;
 
@@ -2164,11 +2255,14 @@ analog:
     - code: abs:x
       deadzone: 0.2
       sensitivity: 1.5
+      curve: aggressive
       invert: true
       output_min: -20000
       output_max: 20000
     - code: abs:z
       deadzone: 0.1
+      curve: custom
+      curve_exponent: 0.75
       max: 200
 "#,
             Path::new("analog.yaml"),
@@ -2179,9 +2273,13 @@ analog:
         assert_eq!(profile.analog.axes[0].code_name, "abs:x");
         assert_eq!(profile.analog.axes[0].deadzone, 0.2);
         assert_eq!(profile.analog.axes[0].sensitivity, 1.5);
+        assert_eq!(profile.analog.axes[0].curve, AnalogCurve::Aggressive);
+        assert_eq!(profile.analog.axes[0].curve_exponent, 2.0);
         assert!(profile.analog.axes[0].invert);
         assert_eq!(profile.analog.axes[0].output_min, -20000);
         assert_eq!(profile.analog.axes[1].code_name, "abs:z");
+        assert_eq!(profile.analog.axes[1].curve, AnalogCurve::Custom);
+        assert_eq!(profile.analog.axes[1].curve_exponent, 0.75);
         assert_eq!(profile.analog.tuning_table().len(), 2);
     }
 
@@ -2214,6 +2312,35 @@ analog:
         .unwrap_err()
         .to_string();
         assert!(error.contains("output range"), "{error}");
+
+        let error = parse_profile_bytes(
+            br#"
+id: bad-curve
+analog:
+  axes:
+    - code: abs:x
+      curve: custom
+"#,
+            Path::new("bad-curve.yaml"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("requires curve_exponent"), "{error}");
+
+        let error = parse_profile_bytes(
+            br#"
+id: bad-curve-exponent
+analog:
+  axes:
+    - code: abs:x
+      curve: linear
+      curve_exponent: 2.0
+"#,
+            Path::new("bad-curve-exponent.yaml"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("requires curve: custom"), "{error}");
     }
 
     #[test]
@@ -2223,6 +2350,8 @@ analog:
             code_name: "abs:x".to_string(),
             deadzone: 0.2,
             sensitivity: 1.5,
+            curve: AnalogCurve::Linear,
+            curve_exponent: 1.0,
             invert: true,
             output_min: -20000,
             output_max: 20000,
@@ -2236,11 +2365,33 @@ analog:
             code_name: "abs:z".to_string(),
             deadzone: 0.1,
             sensitivity: 1.0,
+            curve: AnalogCurve::Linear,
+            curve_exponent: 1.0,
             invert: false,
             output_min: 0,
             output_max: 200,
         };
         assert_eq!(trigger.apply(10), 0);
         assert_eq!(trigger.apply(255), 200);
+
+        let aggressive = AnalogTuning {
+            code: parse_event_code("abs:x").unwrap(),
+            code_name: "abs:x".to_string(),
+            deadzone: 0.0,
+            sensitivity: 1.0,
+            curve: AnalogCurve::Aggressive,
+            curve_exponent: 2.0,
+            invert: false,
+            output_min: -32768,
+            output_max: 32767,
+        };
+        assert!(aggressive.apply(16_384) < 10_000);
+
+        let soft = AnalogTuning {
+            curve: AnalogCurve::Soft,
+            curve_exponent: 0.5,
+            ..aggressive.clone()
+        };
+        assert!(soft.apply(16_384) > 20_000);
     }
 }
