@@ -5,7 +5,7 @@ use crate::profiles::{
     resolve_group_members, ActivatorKind, ActivatorSettings, AnalogTuning, CommandAction,
     CommandSettings, DigitalStickMapping, LayerActivation, LayerActivationMode, MacroEvent,
     MacroEventKind, MacroMode, MacroSettings, Mapping, MappingAction, Profile,
-    StickTransformMapping, MACRO_TAP_RELEASE_MS,
+    StickTransformMapping, TouchpadConfig, MACRO_TAP_RELEASE_MS,
 };
 use crate::{log_info, log_warn};
 use anyhow::{anyhow, Context, Result};
@@ -81,6 +81,17 @@ pub struct RemapRuntime {
     /// Force-feedback effects uploaded to the source, keyed by the virtual
     /// effect id reported to the game.
     ff_effects: HashMap<i16, FFEffect>,
+    /// Optional touchpad-zone source and its live state.
+    touchpad: Option<TouchpadState>,
+}
+
+struct TouchpadState {
+    source: Device,
+    config: TouchpadConfig,
+    x: i32,
+    y: i32,
+    touching: bool,
+    active_zone: Option<EventCode>,
 }
 
 struct RuntimeLayer {
@@ -274,6 +285,40 @@ impl RemapRuntime {
             }
         }
 
+        // Open the touchpad device for zone mapping, if configured.
+        let touchpad = match &options.profile.touchpad {
+            Some(config) => {
+                let available = list_devices().unwrap_or_default();
+                match available
+                    .iter()
+                    .find(|device| config.device_match.matches(device))
+                {
+                    Some(device) => match open_source(&device.path, options.profile.grab_source) {
+                        Ok(source) => {
+                            log_info!("touchpad", "touchpad zones on {}", device.path);
+                            Some(TouchpadState {
+                                source,
+                                config: config.clone(),
+                                x: 0,
+                                y: 0,
+                                touching: false,
+                                active_zone: None,
+                            })
+                        }
+                        Err(error) => {
+                            log_warn!("touchpad", "failed to open touchpad: {error}");
+                            None
+                        }
+                    },
+                    None => {
+                        log_warn!("touchpad", "no device matched the touchpad config");
+                        None
+                    }
+                }
+            }
+            None => None,
+        };
+
         // Forward rumble to the first source that supports force feedback.
         let ff_source_index = sources.iter().position(|source| source_supports_ff(source));
         if ff_source_index.is_some() {
@@ -374,6 +419,7 @@ impl RemapRuntime {
             stop_requested: false,
             ff_source_index,
             ff_effects: HashMap::new(),
+            touchpad,
         })
     }
 
@@ -440,6 +486,7 @@ impl RemapRuntime {
         self.push_due_turbo_events(&mut output);
         self.push_due_relative_axis_events(&mut output);
         self.push_due_mouse_stick_events(&mut output);
+        self.pump_touchpad(&mut output)?;
 
         if !output.is_empty() {
             self.virtual_pad.emit(&output)?;
@@ -508,6 +555,57 @@ impl RemapRuntime {
                 }
                 _ => {}
             }
+        }
+
+        Ok(())
+    }
+
+    /// Read the touchpad device and emit zone button press/release as the touch
+    /// position moves between configured zones.
+    fn pump_touchpad(&mut self, output: &mut Vec<InputEvent>) -> Result<()> {
+        let Some(touchpad) = self.touchpad.as_mut() else {
+            return Ok(());
+        };
+
+        let events: Vec<InputEvent> = match touchpad.source.fetch_events() {
+            Ok(events) => events.collect(),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(()),
+            Err(error) => return Err(error).context("failed reading touchpad events"),
+        };
+
+        for event in events {
+            match event.destructure() {
+                EventSummary::AbsoluteAxis(_, AbsoluteAxisCode::ABS_X, value)
+                | EventSummary::AbsoluteAxis(_, AbsoluteAxisCode::ABS_MT_POSITION_X, value) => {
+                    touchpad.x = value;
+                }
+                EventSummary::AbsoluteAxis(_, AbsoluteAxisCode::ABS_Y, value)
+                | EventSummary::AbsoluteAxis(_, AbsoluteAxisCode::ABS_MT_POSITION_Y, value) => {
+                    touchpad.y = value;
+                }
+                EventSummary::Key(_, KeyCode::BTN_TOUCH, value) => {
+                    touchpad.touching = value != 0;
+                }
+                _ => {}
+            }
+        }
+
+        let new_zone = if touchpad.touching {
+            let nx = (touchpad.x as f64 / touchpad.config.width as f64).clamp(0.0, 1.0);
+            let ny = (touchpad.y as f64 / touchpad.config.height as f64).clamp(0.0, 1.0);
+            touchpad.config.classify(nx, ny)
+        } else {
+            None
+        };
+
+        if new_zone != touchpad.active_zone {
+            if let Some(old) = touchpad.active_zone {
+                output.push(remapped_input_event(old, 0));
+            }
+            if let Some(new) = new_zone {
+                output.push(remapped_input_event(new, 1));
+            }
+            touchpad.active_zone = new_zone;
         }
 
         Ok(())

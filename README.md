@@ -299,6 +299,21 @@ glyphs, while keyboard/mouse capabilities are added when the profile targets
 them. Select the output per profile with the `output:` key (or in the GUI), and
 list every available output with `padproxyctl list-outputs`.
 
+A profile can map a touchpad's regions to buttons with a `touchpad:` block —
+each zone is a normalized rectangle (`0.0..1.0`) that presses its `output` while
+touched:
+
+```yaml
+touchpad:
+  match:
+    name: "Touchpad"
+  width: 1920   # touchpad position range (defaults to DualShock 4's)
+  height: 943
+  zones:
+    - { x_min: 0.0, y_min: 0.0, x_max: 0.5, y_max: 1.0, output: btn:tl }
+    - { x_min: 0.5, y_min: 0.0, x_max: 1.0, y_max: 1.0, output: btn:tr }
+```
+
 A profile can emit to several virtual controllers at once with an `outputs:`
 list (each entry is an output type like `ds4` or `switchpro`); every extra pad
 mirrors the primary pad's output.

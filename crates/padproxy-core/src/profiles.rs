@@ -310,6 +310,8 @@ pub struct Profile {
     pub device_match: DeviceMatch,
     /// Additional source devices grouped into the same virtual controller.
     pub groups: Vec<GroupMember>,
+    /// Optional touchpad zone configuration.
+    pub touchpad: Option<TouchpadConfig>,
     pub process_match: ProcessMatch,
     pub output_type: String,
     /// Additional virtual output devices emitted alongside the primary one.
@@ -331,6 +333,7 @@ struct RawProfile {
     r#match: DeviceMatch,
     #[serde(default)]
     group: Vec<RawGroupEntry>,
+    touchpad: Option<RawTouchpad>,
     process: Option<RawStringOrList>,
     output: Option<RawOutput>,
     #[serde(default)]
@@ -348,6 +351,25 @@ struct RawGroupEntry {
     device_match: DeviceMatch,
     #[serde(default)]
     remap: std::collections::BTreeMap<String, String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawTouchpad {
+    #[serde(default)]
+    r#match: DeviceMatch,
+    width: Option<i32>,
+    height: Option<i32>,
+    #[serde(default)]
+    zones: Vec<RawTouchZone>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawTouchZone {
+    x_min: f64,
+    y_min: f64,
+    x_max: f64,
+    y_max: f64,
+    output: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -671,6 +693,36 @@ impl DeviceMatch {
     }
 }
 
+/// A touchpad zone: a normalized rectangular region mapped to an output.
+#[derive(Clone, Debug, Serialize)]
+pub struct TouchZone {
+    pub x_min: f64,
+    pub y_min: f64,
+    pub x_max: f64,
+    pub y_max: f64,
+    pub output: EventCode,
+}
+
+/// Touchpad zone configuration: a touchpad device plus its position range and
+/// the zones that map touch regions to outputs.
+#[derive(Clone, Debug, Serialize)]
+pub struct TouchpadConfig {
+    pub device_match: DeviceMatch,
+    pub width: i32,
+    pub height: i32,
+    pub zones: Vec<TouchZone>,
+}
+
+impl TouchpadConfig {
+    /// Classify a normalized (0..1) touch position into a zone output.
+    pub fn classify(&self, x: f64, y: f64) -> Option<EventCode> {
+        self.zones
+            .iter()
+            .find(|zone| x >= zone.x_min && x <= zone.x_max && y >= zone.y_min && y <= zone.y_max)
+            .map(|zone| zone.output)
+    }
+}
+
 /// A grouped device: a matcher plus an optional per-device input sub-config
 /// (a remap of this device's input codes applied before the shared profile).
 #[derive(Clone, Debug, Default, Serialize)]
@@ -678,6 +730,34 @@ pub struct GroupMember {
     pub device_match: DeviceMatch,
     /// Input remap pairs (`from` -> `to`) applied to this device's events.
     pub remap: Vec<(EventCode, EventCode)>,
+}
+
+fn parse_touchpad(raw: Option<RawTouchpad>) -> Result<Option<TouchpadConfig>> {
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let zones = raw
+        .zones
+        .into_iter()
+        .map(|zone| {
+            let output = parse_event_code(&zone.output)
+                .with_context(|| format!("invalid touchpad zone output {}", zone.output))?;
+            Ok(TouchZone {
+                x_min: zone.x_min,
+                y_min: zone.y_min,
+                x_max: zone.x_max,
+                y_max: zone.y_max,
+                output,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(Some(TouchpadConfig {
+        device_match: raw.r#match,
+        // DualShock 4 touchpad resolution is the default range.
+        width: raw.width.unwrap_or(1920).max(1),
+        height: raw.height.unwrap_or(943).max(1),
+        zones,
+    }))
 }
 
 fn parse_group_members(raw: Vec<RawGroupEntry>) -> Result<Vec<GroupMember>> {
@@ -1177,6 +1257,7 @@ pub fn parse_profile_bytes(bytes: &[u8], source_path: &Path) -> Result<Profile> 
         description: raw.description.unwrap_or_default(),
         device_match: raw.r#match,
         groups: parse_group_members(raw.group)?,
+        touchpad: parse_touchpad(raw.touchpad)?,
         outputs,
         process_match: ProcessMatch {
             patterns: raw
@@ -2947,6 +3028,39 @@ mappings:
             assert_eq!(command.action, CommandAction::RemapOff);
             assert!(command.command_line.is_empty());
         }
+    }
+
+    #[test]
+    fn touchpad_zones_classify_positions() {
+        let profile = parse_profile_bytes(
+            br#"
+id: touchpad
+touchpad:
+  match:
+    name: "Touchpad"
+  width: 1000
+  height: 1000
+  zones:
+    - { x_min: 0.0, y_min: 0.0, x_max: 0.5, y_max: 1.0, output: btn:tl }
+    - { x_min: 0.5, y_min: 0.0, x_max: 1.0, y_max: 1.0, output: btn:tr }
+mappings: []
+"#,
+            Path::new("touchpad.yaml"),
+        )
+        .unwrap();
+        let touchpad = profile.touchpad.unwrap();
+        assert_eq!(touchpad.width, 1000);
+        assert_eq!(touchpad.zones.len(), 2);
+        assert_eq!(
+            touchpad.classify(0.25, 0.5),
+            Some(parse_event_code("btn:tl").unwrap())
+        );
+        assert_eq!(
+            touchpad.classify(0.75, 0.5),
+            Some(parse_event_code("btn:tr").unwrap())
+        );
+        // A position outside every zone yields nothing.
+        assert!(touchpad.classify(1.5, 0.5).is_none());
     }
 
     #[test]

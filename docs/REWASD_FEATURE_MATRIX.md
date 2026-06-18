@@ -213,7 +213,9 @@ Joy-Cons) are tracked separately under Sensors/Grouping.
   axes mapped to mouse or stick output via the analog axis-to-mouse mappings.
 - Gyro activation only on shift/layer/hold. Done via layers: place the gyro
   axis mappings in a hold/toggle shift layer so they apply only while active.
-- Touchpad zones.
+- Touchpad zones. Basic touchpad zones done: a profile `touchpad:` config maps
+  a touchpad device's normalized touch regions to button/key outputs, pressing
+  the matching zone's output while a finger is in it.
 - Controller vibration settings. Game-driven rumble is forwarded to the source
   controller (see rumble passthrough under Combos/Macros).
 - Rumble mappings. Basic rumble passthrough done; explicit profile-driven rumble
