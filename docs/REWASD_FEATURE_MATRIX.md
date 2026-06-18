@@ -212,7 +212,10 @@ Source pages consulted:
 - Emergency remap off. Done through a `remap_off` command mapping that stops
   the running remap, releases the virtual device, and ungrabs the source
   controller; during a launch it leaves the launched program running.
-- Blocklist for apps/games where remap should not apply.
+- Blocklist for apps/games where remap should not apply. Done: a
+  `blocklist.txt` of process name/glob patterns (viewable with
+  `padproxyctl list-blocklist`) keeps `padproxyctl watch` from applying, and
+  stops any active remap, while a blocked process is running.
 - Logging and diagnostic export. Basic JSON diagnostic export is done with
   `padproxyctl diagnostics`; structured runtime logging remains.
 

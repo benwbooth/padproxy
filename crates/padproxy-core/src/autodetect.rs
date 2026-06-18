@@ -6,7 +6,7 @@
 //! profile matches, mirroring reWASD's "autodetect game process and apply
 //! profile" behavior.
 
-use crate::profiles::Profile;
+use crate::profiles::{ProcessMatch, Profile};
 use std::path::Path;
 
 /// A profile matched against a running process.
@@ -107,11 +107,22 @@ pub enum WatchDecision {
 /// Decide how a watch loop should react to the current process list.
 ///
 /// `active_profile_id` is the profile currently being applied, if any.
+/// `blocklist` names processes where remap must stay off: while any blocked
+/// process is running, no profile is applied and any active remap is stopped.
 pub fn decide_watch(
     profiles: &[Profile],
     process_names: &[String],
     active_profile_id: Option<&str>,
+    blocklist: &ProcessMatch,
 ) -> WatchDecision {
+    if crate::blocklist::is_blocked(blocklist, process_names) {
+        return if active_profile_id.is_some() {
+            WatchDecision::Stop
+        } else {
+            WatchDecision::Keep
+        };
+    }
+
     let best = match_profile(profiles, process_names).map(|(profile, _)| profile.id.clone());
     match (active_profile_id, best) {
         (Some(active), Some(best)) if active == best => WatchDecision::Keep,
@@ -159,33 +170,74 @@ mod tests {
     #[test]
     fn watch_decisions_track_running_processes() {
         use super::{decide_watch, WatchDecision};
+        use crate::profiles::ProcessMatch;
 
         let profiles = vec![profile("retro", "[retroarch]"), profile("game", "[mygame]")];
+        let no_blocklist = ProcessMatch::default();
 
         // Nothing active, a match appears -> switch to it.
         assert_eq!(
-            decide_watch(&profiles, &["retroarch".to_string()], None),
+            decide_watch(&profiles, &["retroarch".to_string()], None, &no_blocklist),
             WatchDecision::Switch("retro".to_string())
         );
         // Same profile still matches -> keep.
         assert_eq!(
-            decide_watch(&profiles, &["retroarch".to_string()], Some("retro")),
+            decide_watch(
+                &profiles,
+                &["retroarch".to_string()],
+                Some("retro"),
+                &no_blocklist
+            ),
             WatchDecision::Keep
         );
         // A different profile now matches -> switch.
         assert_eq!(
-            decide_watch(&profiles, &["mygame".to_string()], Some("retro")),
+            decide_watch(
+                &profiles,
+                &["mygame".to_string()],
+                Some("retro"),
+                &no_blocklist
+            ),
             WatchDecision::Switch("game".to_string())
         );
         // Active profile's process is gone -> stop.
         assert_eq!(
-            decide_watch(&profiles, &["someoneelse".to_string()], Some("retro")),
+            decide_watch(
+                &profiles,
+                &["someoneelse".to_string()],
+                Some("retro"),
+                &no_blocklist
+            ),
             WatchDecision::Stop
         );
         // Nothing active and nothing matches -> keep idling.
         assert_eq!(
-            decide_watch(&profiles, &["someoneelse".to_string()], None),
+            decide_watch(&profiles, &["someoneelse".to_string()], None, &no_blocklist),
             WatchDecision::Keep
+        );
+    }
+
+    #[test]
+    fn watch_respects_blocklist() {
+        use super::{decide_watch, WatchDecision};
+
+        let profiles = vec![profile("retro", "[retroarch]")];
+        let blocklist = crate::blocklist::parse_blocklist("retroarch\n");
+
+        // A matching profile is suppressed while the process is blocklisted.
+        assert_eq!(
+            decide_watch(&profiles, &["retroarch".to_string()], None, &blocklist),
+            WatchDecision::Keep
+        );
+        // An active remap stops when a blocked process is running.
+        assert_eq!(
+            decide_watch(
+                &profiles,
+                &["retroarch".to_string()],
+                Some("retro"),
+                &blocklist
+            ),
+            WatchDecision::Stop
         );
     }
 

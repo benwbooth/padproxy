@@ -1,4 +1,5 @@
 pub mod autodetect;
+pub mod blocklist;
 pub mod capture;
 pub mod devices;
 pub mod event_code;

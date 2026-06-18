@@ -3,6 +3,7 @@ use clap::{Parser, Subcommand};
 use padproxy_core::autodetect::{
     decide_watch, detect_profile, match_profile, running_process_names, WatchDecision,
 };
+use padproxy_core::blocklist::{blocklist_path, load_blocklist};
 use padproxy_core::devices::DeviceInfo;
 use padproxy_core::linux::{list_devices, resolve_device};
 use padproxy_core::outputs::output_devices;
@@ -30,6 +31,7 @@ enum Command {
     ListOutputs,
     ListProfiles,
     ListBatteries,
+    ListBlocklist,
     Detect,
     Watch {
         #[arg(long)]
@@ -132,6 +134,16 @@ fn main() -> Result<()> {
                     profile.name,
                     profile.source_path.display()
                 );
+            }
+            Ok(())
+        }
+        Command::ListBlocklist => {
+            let blocklist = load_blocklist();
+            if blocklist.is_empty() {
+                eprintln!("Blocklist is empty ({}).", blocklist_path().display());
+            }
+            for pattern in &blocklist.patterns {
+                println!("{pattern}");
             }
             Ok(())
         }
@@ -254,6 +266,7 @@ fn run_watch(controller: &str, interval_ms: u64) -> Result<()> {
 
     loop {
         let profiles = load_profiles(&default_profile_dirs())?;
+        let blocklist = load_blocklist();
         let names = running_process_names();
 
         // Clear suppression once the suppressed profile no longer matches.
@@ -267,7 +280,7 @@ fn run_watch(controller: &str, interval_ms: u64) -> Result<()> {
         }
 
         let active_id = active.as_ref().map(|(_, id)| id.as_str());
-        match decide_watch(&profiles, &names, active_id) {
+        match decide_watch(&profiles, &names, active_id, &blocklist) {
             WatchDecision::Keep => {}
             WatchDecision::Stop => {
                 if active.take().is_some() {

@@ -100,6 +100,16 @@ profile, switches when a different known game takes focus, and stops the remap
 when the matched process exits. A `remap_off` command mapping pauses auto-apply
 for that game until its process exits.
 
+To keep remap off for certain apps entirely, list process name/glob patterns
+(one per line, `#` for comments) in `~/.config/padproxy/blocklist.txt` (or
+`$PADPROXY_BLOCKLIST_FILE`). While any blocklisted process is running, `watch`
+will not apply a profile and stops any active remap. Inspect the loaded
+blocklist with:
+
+```sh
+nix develop --command cargo run --bin padproxyctl -- list-blocklist
+```
+
 Run a foreground remap until Ctrl-C:
 
 ```sh
