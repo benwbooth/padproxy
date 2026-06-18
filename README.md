@@ -27,6 +27,8 @@ The long-term reWASD-style feature target is tracked in
 - `padproxyctl launch` for running a command through a remapping profile.
 - Virtual Xbox-style gamepad output through `/dev/uinput`.
 - Source-device grabbing with `EVIOCGRAB` while the launched command runs.
+- Rumble passthrough: game force-feedback effects on the virtual pad are
+  forwarded to the physical controller when it supports force feedback.
 
 ## Requirements
 

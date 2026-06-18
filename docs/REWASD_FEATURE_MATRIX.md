@@ -86,7 +86,9 @@ Source pages consulted:
 - Explicit down/up events. Done for controller, keyboard, and mouse-button
   macro events.
 - Pauses. Done for controller macros.
-- Rumble events.
+- Rumble events. Basic rumble passthrough done: when the source controller
+  supports force feedback, the virtual pad advertises rumble and forwards game
+  force-feedback effects (upload/play/stop/erase) to the physical controller.
 - Break/cancel events. Basic YAML macro cancel/break/stop events done; they
   stop queued and held macro output at their scheduled point in the sequence.
 - Execute-at-once macros. Done for press-triggered controller macros.
@@ -197,8 +199,10 @@ Joy-Cons) are tracked separately under Sensors/Grouping.
 - Gyroscope mappings.
 - Gyro activation only on shift/layer/hold.
 - Touchpad zones.
-- Controller vibration settings.
-- Rumble mappings.
+- Controller vibration settings. Game-driven rumble is forwarded to the source
+  controller (see rumble passthrough under Combos/Macros).
+- Rumble mappings. Basic rumble passthrough done; explicit profile-driven rumble
+  triggers remain.
 - LED settings. Basic LED control done: `padproxyctl list-leds` enumerates
   Linux `sys/class/leds` devices (brightness, max, and RGB `multi_intensity`),
   and `padproxyctl set-led` sets brightness (clamped) and RGB color.

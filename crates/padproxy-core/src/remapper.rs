@@ -11,8 +11,8 @@ use crate::{log_info, log_warn};
 use anyhow::{anyhow, Context, Result};
 use evdev::uinput::VirtualDevice;
 use evdev::{
-    AbsInfo, AbsoluteAxisCode, AttributeSet, BusType, Device, EventType, InputEvent, InputId,
-    KeyCode, RelativeAxisCode, UinputAbsSetup,
+    AbsInfo, AbsoluteAxisCode, AttributeSet, BusType, Device, EventSummary, EventType, FFEffect,
+    FFEffectCode, InputEvent, InputId, KeyCode, RelativeAxisCode, UInputCode, UinputAbsSetup,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::process::{Child, Command};
@@ -72,6 +72,11 @@ pub struct RemapRuntime {
     command_children: Vec<Child>,
     virtual_nodes: Vec<String>,
     stop_requested: bool,
+    /// Index into `sources` of the device that receives forwarded rumble, if any.
+    ff_source_index: Option<usize>,
+    /// Force-feedback effects uploaded to the source, keyed by the virtual
+    /// effect id reported to the game.
+    ff_effects: HashMap<i16, FFEffect>,
 }
 
 struct RuntimeLayer {
@@ -260,8 +265,14 @@ impl RemapRuntime {
             }
         }
 
-        let mut virtual_pad =
-            create_virtual_pad(&options.profile).context("failed to create virtual pad")?;
+        // Forward rumble to the first source that supports force feedback.
+        let ff_source_index = sources.iter().position(|source| source_supports_ff(source));
+        if ff_source_index.is_some() {
+            log_info!("rumble", "force-feedback passthrough enabled");
+        }
+
+        let mut virtual_pad = create_virtual_pad(&options.profile, ff_source_index.is_some())
+            .context("failed to create virtual pad")?;
         let virtual_nodes = virtual_pad
             .enumerate_dev_nodes_blocking()
             .ok()
@@ -344,6 +355,8 @@ impl RemapRuntime {
             command_children: Vec::new(),
             virtual_nodes,
             stop_requested: false,
+            ff_source_index,
+            ff_effects: HashMap::new(),
         })
     }
 
@@ -359,6 +372,7 @@ impl RemapRuntime {
 
     pub fn pump_once(&mut self) -> Result<()> {
         self.reap_command_children();
+        self.forward_force_feedback()?;
 
         let mut had_events = false;
         let mut events = Vec::new();
@@ -400,6 +414,65 @@ impl RemapRuntime {
             self.virtual_pad.emit(&output)?;
         } else if !had_events {
             thread::sleep(Duration::from_millis(5));
+        }
+
+        Ok(())
+    }
+
+    /// Forward rumble: when a game uploads/plays a force-feedback effect on the
+    /// virtual pad, replay it on the physical source controller.
+    fn forward_force_feedback(&mut self) -> Result<()> {
+        let Some(src_idx) = self.ff_source_index else {
+            return Ok(());
+        };
+
+        let events: Vec<InputEvent> = match self.virtual_pad.fetch_events() {
+            Ok(events) => events.collect(),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(()),
+            Err(error) => {
+                return Err(error).context("failed reading virtual force-feedback events")
+            }
+        };
+
+        for event in events {
+            match event.destructure() {
+                EventSummary::UInput(ui_event, UInputCode::UI_FF_UPLOAD, _) => {
+                    let mut upload = self.virtual_pad.process_ff_upload(ui_event)?;
+                    match self.sources[src_idx].upload_ff_effect(upload.effect()) {
+                        Ok(effect) => {
+                            let id = effect.id() as i16;
+                            upload.set_effect_id(id);
+                            upload.set_retval(0);
+                            self.ff_effects.insert(id, effect);
+                        }
+                        Err(error) => {
+                            log_warn!("rumble", "failed to forward force-feedback effect: {error}");
+                            upload.set_retval(-1);
+                        }
+                    }
+                }
+                EventSummary::UInput(ui_event, UInputCode::UI_FF_ERASE, _) => {
+                    let erase = self.virtual_pad.process_ff_erase(ui_event)?;
+                    self.ff_effects.remove(&(erase.effect_id() as i16));
+                }
+                EventSummary::ForceFeedback(_, effect_code, value) => {
+                    if let Some(effect) = self.ff_effects.get_mut(&(effect_code.0 as i16)) {
+                        let result = if value == 0 {
+                            effect.stop()
+                        } else {
+                            effect.play(value)
+                        };
+                        if let Err(error) = result {
+                            log_warn!(
+                                "rumble",
+                                "failed to drive force-feedback effect {}: {error}",
+                                effect_code.0
+                            );
+                        }
+                    }
+                }
+                _ => {}
+            }
         }
 
         Ok(())
@@ -1404,7 +1477,14 @@ fn open_source(path: &str, grab: bool) -> Result<Device> {
     Ok(source)
 }
 
-fn create_virtual_pad(profile: &Profile) -> Result<VirtualDevice> {
+fn source_supports_ff(source: &Device) -> bool {
+    source
+        .supported_ff()
+        .map(|effects| effects.iter().next().is_some())
+        .unwrap_or(false)
+}
+
+fn create_virtual_pad(profile: &Profile, enable_ff: bool) -> Result<VirtualDevice> {
     let descriptor = output_device(&profile.output_type).ok_or_else(|| {
         anyhow!(
             "unknown virtual output {}; supported outputs: {}",
@@ -1469,6 +1549,12 @@ fn create_virtual_pad(profile: &Profile) -> Result<VirtualDevice> {
 
     if relative_axes.iter().next().is_some() {
         builder = builder.with_relative_axes(&relative_axes)?;
+    }
+
+    if enable_ff {
+        // Advertise rumble so games upload force-feedback effects we can forward.
+        let ff = AttributeSet::from_iter([FFEffectCode::FF_RUMBLE]);
+        builder = builder.with_ff(&ff)?.with_ff_effects_max(16);
     }
 
     builder.build().map_err(Into::into)
