@@ -108,6 +108,42 @@ fn encode_png_rgb(width: u32, height: u32, rgb: &[u8]) -> Result<Vec<u8>> {
     Ok(png)
 }
 
+fn encode_png_gray(width: u32, height: u32, gray: &[u8]) -> Result<Vec<u8>> {
+    let mut png = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut png, width, height);
+        encoder.set_color(png::ColorType::Grayscale);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header()?;
+        writer.write_image_data(gray)?;
+    }
+    Ok(png)
+}
+
+/// Luminance plane of a YUYV buffer (Y is every other byte).
+fn yuyv_to_gray(buf: &[u8], width: u32, height: u32) -> Vec<u8> {
+    let count = (width * height) as usize;
+    (0..count)
+        .map(|i| buf.get(i * 2).copied().unwrap_or(0))
+        .collect()
+}
+
+/// COLMAP mask: 255 (keep) where the frame differs from the static background
+/// reference by at least `threshold`, else 0 (ignored). This isolates the
+/// controller from the room so pose estimation matches features on the pad.
+fn compute_mask(gray: &[u8], background: &[u8], threshold: u8) -> Vec<u8> {
+    gray.iter()
+        .zip(background)
+        .map(|(&g, &b)| {
+            if (g as i16 - b as i16).unsigned_abs() as u8 >= threshold {
+                255
+            } else {
+                0
+            }
+        })
+        .collect()
+}
+
 /// Nearest 2x downscale of interleaved RGB.
 fn downscale2_rgb(width: u32, height: u32, rgb: &[u8]) -> (u32, u32, Vec<u8>) {
     let (w, h) = (width / 2, height / 2);
@@ -136,19 +172,32 @@ fn write_pipeline(dir: &Path) -> Result<PathBuf> {
 # Requires a GPU plus COLMAP (camera poses) and brush (training + viewer):
 #   COLMAP: https://colmap.github.io/
 #   brush:  https://github.com/ArthurBrussee/brush  (cargo install or release binary)
+#
+# images/ holds the frames, masks/ holds per-image foreground masks (the
+# controller isolated from the background) so COLMAP only matches features on
+# the controller — not the room.
 set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
+DB="$DIR/database.db"
 
-echo "[1/2] Estimating camera poses with COLMAP..."
-mkdir -p "$DIR/colmap"
-colmap automatic_reconstructor \
-  --workspace_path "$DIR/colmap" \
-  --image_path "$DIR/frames" \
-  --camera_model SIMPLE_PINHOLE \
-  --dense 0
+echo "[1/3] Extracting features (controller-only, via masks)..."
+colmap feature_extractor \
+  --database_path "$DB" \
+  --image_path "$DIR/images" \
+  --ImageReader.mask_path "$DIR/masks" \
+  --ImageReader.single_camera 1 \
+  --ImageReader.camera_model SIMPLE_PINHOLE
 
-echo "[2/2] Training + viewing the gaussian splat with brush..."
-brush "$DIR/colmap"
+echo "[2/3] Matching and estimating camera poses..."
+colmap exhaustive_matcher --database_path "$DB"
+mkdir -p "$DIR/sparse"
+colmap mapper \
+  --database_path "$DB" \
+  --image_path "$DIR/images" \
+  --output_path "$DIR/sparse"
+
+echo "[3/3] Training + viewing the gaussian splat with brush..."
+brush "$DIR"
 "#;
     std::fs::write(&script, body)
         .with_context(|| format!("failed to write {}", script.display()))?;
@@ -162,6 +211,11 @@ brush "$DIR/colmap"
     Ok(script)
 }
 
+/// Frames averaged into the static background reference before capture begins.
+const BACKGROUND_FRAMES: u32 = 20;
+/// Per-pixel luminance difference that counts as foreground (controller).
+const MASK_THRESHOLD: u8 = 28;
+
 fn run(
     camera_path: &str,
     output_dir: &Path,
@@ -169,9 +223,13 @@ fn run(
     stop: &AtomicBool,
     sender: &mpsc::Sender<CaptureMessage>,
 ) -> Result<()> {
-    let frames_dir = output_dir.join("frames");
-    std::fs::create_dir_all(&frames_dir)
-        .with_context(|| format!("failed to create {}", frames_dir.display()))?;
+    // brush reads a COLMAP project: images/ + masks/ + sparse/0.
+    let images_dir = output_dir.join("images");
+    let masks_dir = output_dir.join("masks");
+    std::fs::create_dir_all(&images_dir)
+        .with_context(|| format!("failed to create {}", images_dir.display()))?;
+    std::fs::create_dir_all(&masks_dir)
+        .with_context(|| format!("failed to create {}", masks_dir.display()))?;
 
     let mut camera = rscam::Camera::new(camera_path)
         .with_context(|| format!("failed to open camera {camera_path}"))?;
@@ -185,8 +243,35 @@ fn run(
         })
         .context("camera does not support 640x480 YUYV")?;
 
+    // Phase 1: build a static background reference (controller out of frame).
     let _ = sender.send(CaptureMessage::Status(
-        "Slowly rotate the controller so the camera sees every side.".to_string(),
+        "Capturing background — keep the controller OUT of view for a moment…".to_string(),
+    ));
+    let pixels = (width * height) as usize;
+    let mut accum = vec![0u32; pixels];
+    let mut bg_count = 0u32;
+    while bg_count < BACKGROUND_FRAMES && !stop.load(Ordering::Relaxed) {
+        let buf = camera.capture().context("camera frame read failed")?;
+        let gray = yuyv_to_gray(&buf, width, height);
+        for (a, &g) in accum.iter_mut().zip(&gray) {
+            *a += g as u32;
+        }
+        bg_count += 1;
+        if bg_count % 3 == 0 {
+            let rgb = yuyv_to_rgb(&buf, width, height);
+            if let Some(uri) = preview_data_uri(width, height, &rgb) {
+                let _ = sender.send(CaptureMessage::Preview(uri));
+            }
+        }
+    }
+    let background: Vec<u8> = accum
+        .iter()
+        .map(|&sum| (sum / bg_count.max(1)) as u8)
+        .collect();
+
+    // Phase 2: capture the controller, masking each frame against the background.
+    let _ = sender.send(CaptureMessage::Status(
+        "Now hold up the controller and slowly rotate it so every side is seen.".to_string(),
     ));
 
     let mut saved: u32 = 0;
@@ -206,10 +291,20 @@ fn run(
         }
 
         if tick % save_every == 0 {
+            let name = format!("frame_{saved:04}.png");
             let png = encode_png_rgb(width, height, &rgb)?;
-            let path = frames_dir.join(format!("frame_{saved:04}.png"));
-            std::fs::write(&path, png)
-                .with_context(|| format!("failed to write {}", path.display()))?;
+            let image_path = images_dir.join(&name);
+            std::fs::write(&image_path, png)
+                .with_context(|| format!("failed to write {}", image_path.display()))?;
+
+            // COLMAP expects the mask named "<image>.png" beside the image path.
+            let gray = yuyv_to_gray(&buf, width, height);
+            let mask = compute_mask(&gray, &background, MASK_THRESHOLD);
+            let mask_png = encode_png_gray(width, height, &mask)?;
+            let mask_path = masks_dir.join(format!("{name}.png"));
+            std::fs::write(&mask_path, mask_png)
+                .with_context(|| format!("failed to write {}", mask_path.display()))?;
+
             saved += 1;
             let _ = sender.send(CaptureMessage::Progress {
                 saved,
@@ -263,7 +358,19 @@ pub fn launch_pipeline(output_dir: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{write_pipeline, yuyv_to_rgb};
+    use super::{compute_mask, write_pipeline, yuyv_to_rgb};
+
+    #[test]
+    fn mask_isolates_foreground_from_background() {
+        // Uniform background; one pixel changes a lot (the controller arriving).
+        let background = vec![100u8; 9];
+        let mut frame = vec![100u8; 9];
+        frame[4] = 200;
+        let mask = compute_mask(&frame, &background, 28);
+        assert_eq!(mask[4], 255, "changed pixel is foreground");
+        assert_eq!(mask[0], 0, "unchanged pixel is background");
+        assert_eq!(mask.iter().filter(|&&m| m == 255).count(), 1);
+    }
 
     #[test]
     fn yuyv_gray_maps_to_gray_rgb() {

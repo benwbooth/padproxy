@@ -2138,9 +2138,10 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 color: root.colText
-                text: "Hold the controller in front of the webcam and slowly rotate it so every side is "
-                    + "seen. PadProxy records the frames. Building the actual gaussian splat then runs "
-                    + "COLMAP + brush on your machine — a GPU is required."
+                text: "After you click Start, keep the controller OUT of view for a moment while the "
+                    + "background is captured, then hold it up and slowly rotate it so every side is seen. "
+                    + "Each frame is masked to the controller so the room is ignored. Building the actual "
+                    + "gaussian splat then runs COLMAP + brush on your machine — a GPU is required."
             }
 
             RowLayout {
