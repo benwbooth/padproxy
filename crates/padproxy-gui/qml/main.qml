@@ -27,10 +27,135 @@ ApplicationWindow {
 
     color: "#101218"
 
+    // Whether section "?" hints and inline help are shown.
+    property bool helpMode: false
+
+    // Comprehensive in-app help: one entry per feature/area. Drives the Help
+    // drawer; the same text is reused for tooltips and section hints.
+    readonly property var helpSections: [
+        {
+            title: "What PadProxy does",
+            body: "PadProxy remaps a game controller. You take a physical controller, "
+                + "define what each button/stick should do, and PadProxy creates a "
+                + "virtual controller (or keyboard/mouse) that games see instead. "
+                + "The basic flow: pick a controller → pick or create a profile → map "
+                + "controls on the diagram → Apply it live or Launch a game through it."
+        },
+        {
+            title: "Controllers (left panel)",
+            body: "Every input device PadProxy can read: gamepads, keyboards, mice, and "
+                + "virtual devices. A green dot is a physical device, blue is virtual. "
+                + "Click the controller you want to remap before applying a profile."
+        },
+        {
+            title: "Profiles (middle panel)",
+            body: "A profile is a saved set of mappings for a game or app. 'New' starts a "
+                + "blank profile; 'Edit' opens the selected profile's raw YAML. Click a "
+                + "profile to load it into the editor on the right."
+        },
+        {
+            title: "Mapping with the controller diagram",
+            body: "The diagram is the heart of the editor. Click any control on it to add "
+                + "or change a mapping for that button/stick. Pick the controller image "
+                + "that matches your pad (Xbox / PlayStation / Generic) from the selector."
+        },
+        {
+            title: "Source vs Target, and Listen",
+            body: "A mapping says 'when Source is pressed, send Target'. 'Source' is the "
+                + "physical control; 'Target' is what the virtual controller sends. "
+                + "'Listen' (hook mode) lets you press a real button to capture it instead "
+                + "of clicking the diagram."
+        },
+        {
+            title: "Output type",
+            body: "Which virtual controller games will see — Xbox 360, Xbox One, "
+                + "DualShock 4, DualSense, or Switch Pro. Most PC games expect Xbox 360."
+        },
+        {
+            title: "Hide physical controller / Unmapped controls",
+            body: "'Hide physical controller' grabs the real device so games only see the "
+                + "virtual one (no double input). 'Unmapped controls' decides whether "
+                + "buttons you didn't map still pass through to the virtual controller."
+        },
+        {
+            title: "Layers (Main + Shift)",
+            body: "Layers let one button change what the others do. The Main layer is "
+                + "always active; a Shift layer activates while you hold (or toggle) a "
+                + "chosen button — like a second set of mappings on the same pad."
+        },
+        {
+            title: "Analog tuning",
+            body: "Fine-tune sticks and triggers: deadzone (ignore tiny movement), "
+                + "sensitivity, response curve, inversion, and output range. Stick "
+                + "rotation turns a stick's output; swap sticks exchanges left/right."
+        },
+        {
+            title: "Analog zones & digital sticks",
+            body: "Analog zones fire a button/key when a stick or trigger passes a "
+                + "threshold (low/medium/high). Digital sticks turn an analog stick into "
+                + "a D-pad (8-way) so it acts like buttons."
+        },
+        {
+            title: "Apply, Save, and Launch",
+            body: "'Apply' starts remapping the selected controller live; press it again "
+                + "to turn the remap off. 'Save' writes the profile to disk so you can "
+                + "reuse it. To launch a game through a profile, use the command line: "
+                + "padproxyctl launch --profile <id> --controller <device> -- <game>."
+        },
+        {
+            title: "Overlays",
+            body: "PadProxy can show on-screen overlays (crosshair, radial menu, "
+                + "active-layer badge, status HUD, magnifier). Launch them from a "
+                + "terminal, e.g. padproxy --overlay crosshair."
+        }
+    ]
+
+    // Guided tour steps shown by the walkthrough overlay.
+    readonly property var tourSteps: [
+        {
+            title: "Welcome to PadProxy",
+            body: "PadProxy remaps your controller. This 6-step tour shows the whole "
+                + "workflow. You can reopen it any time from 'Take the tour' at the top."
+        },
+        {
+            title: "1 · Pick a controller",
+            body: "On the far left is every input device PadProxy found. Click the "
+                + "controller you want to remap. Green = physical, blue = virtual."
+        },
+        {
+            title: "2 · Pick or create a profile",
+            body: "The middle panel lists saved profiles. Click one to load it, or press "
+                + "'New' to start fresh. A profile holds all the mappings for a game."
+        },
+        {
+            title: "3 · Map your buttons",
+            body: "In the editor, use the controller diagram: click a button or stick to "
+                + "set what it should do. Use 'Listen' to capture by pressing a real button."
+        },
+        {
+            title: "4 · Tune the details (optional)",
+            body: "Set the Output type (usually Xbox 360), choose whether to hide the "
+                + "physical controller, and add Shift layers or analog tuning if you want."
+        },
+        {
+            title: "5 · Apply or Save",
+            body: "Press 'Apply' to start remapping the selected controller right now, or "
+                + "'Save' to store the profile for later. Apply again to turn it off."
+        },
+        {
+            title: "Need a reminder?",
+            body: "Every panel and button has a tooltip — hover to see what it does. The "
+                + "'?  Help' button opens a full guide explaining every feature."
+        }
+    ]
+    property int tourIndex: 0
+
     Component.onCompleted: Qt.callLater(function() {
         root.show()
         root.raise()
         root.requestActivate()
+        // Greet first-time users with the guided walkthrough.
+        tour.start()
     })
 
     PadProxyController {
@@ -1659,12 +1784,196 @@ ApplicationWindow {
             Button {
                 text: "Refresh"
                 onClicked: backend.refresh()
+                ToolTip.visible: hovered
+                ToolTip.text: "Re-scan for connected controllers and reload saved profiles."
             }
 
             Label {
                 text: backend.status
+                color: root.colTextDim
                 elide: Text.ElideRight
                 Layout.fillWidth: true
+            }
+
+            Button {
+                text: "Take the tour"
+                flat: true
+                onClicked: tour.start()
+                ToolTip.visible: hovered
+                ToolTip.text: "A step-by-step walkthrough of how PadProxy works."
+            }
+
+            Button {
+                text: "?  Help"
+                onClicked: helpDrawer.open()
+                Layout.rightMargin: 8
+                ToolTip.visible: hovered
+                ToolTip.text: "Open the help guide explaining every part of PadProxy."
+            }
+        }
+    }
+
+    // ---- Help guide (slide-out drawer) ----------------------------------
+    Drawer {
+        id: helpDrawer
+        edge: Qt.RightEdge
+        width: Math.min(460, root.width)
+        height: root.height
+        Material.background: root.colSurface
+
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 18
+            spacing: 12
+
+            RowLayout {
+                Layout.fillWidth: true
+                Label {
+                    text: "Help & Guide"
+                    font.pixelSize: 20
+                    font.bold: true
+                    color: root.colText
+                    Layout.fillWidth: true
+                }
+                Button {
+                    text: "Take the tour"
+                    onClicked: { helpDrawer.close(); tour.start() }
+                }
+            }
+
+            Label {
+                text: "Hover any control for a tooltip. Below is what every part does."
+                color: root.colTextDim
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+            }
+
+            ScrollView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                contentWidth: availableWidth
+
+                ColumnLayout {
+                    width: parent.availableWidth
+                    spacing: 14
+
+                    Repeater {
+                        model: root.helpSections
+                        delegate: Rectangle {
+                            Layout.fillWidth: true
+                            color: root.colSurfaceAlt
+                            radius: root.radius
+                            implicitHeight: helpCol.implicitHeight + 24
+
+                            ColumnLayout {
+                                id: helpCol
+                                anchors.fill: parent
+                                anchors.margins: 12
+                                spacing: 4
+                                Label {
+                                    text: modelData.title
+                                    font.bold: true
+                                    font.pixelSize: 14
+                                    color: root.colAccent
+                                    Layout.fillWidth: true
+                                    wrapMode: Text.WordWrap
+                                }
+                                Label {
+                                    text: modelData.body
+                                    color: root.colText
+                                    Layout.fillWidth: true
+                                    wrapMode: Text.WordWrap
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- Guided tour (modal walkthrough) --------------------------------
+    Popup {
+        id: tour
+        modal: true
+        focus: true
+        anchors.centerIn: Overlay.overlay
+        width: 460
+        padding: 0
+        closePolicy: Popup.CloseOnEscape
+        Material.background: root.colSurface
+
+        function start() {
+            root.tourIndex = 0
+            open()
+        }
+
+        property var step: root.tourSteps[Math.min(root.tourIndex, root.tourSteps.length - 1)]
+
+        ColumnLayout {
+            width: parent.width
+            spacing: 0
+
+            Rectangle {
+                Layout.fillWidth: true
+                height: 6
+                color: root.colAccent
+            }
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.margins: 22
+                spacing: 12
+
+                Label {
+                    text: tour.step.title
+                    font.pixelSize: 19
+                    font.bold: true
+                    color: root.colText
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                }
+                Label {
+                    text: tour.step.body
+                    color: root.colText
+                    font.pixelSize: 14
+                    lineHeight: 1.2
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    Layout.topMargin: 6
+                    spacing: 8
+
+                    Label {
+                        text: (root.tourIndex + 1) + " / " + root.tourSteps.length
+                        color: root.colTextDim
+                        Layout.fillWidth: true
+                    }
+                    Button {
+                        text: "Skip"
+                        flat: true
+                        onClicked: tour.close()
+                    }
+                    Button {
+                        text: "Back"
+                        enabled: root.tourIndex > 0
+                        onClicked: root.tourIndex = Math.max(0, root.tourIndex - 1)
+                    }
+                    Button {
+                        text: root.tourIndex >= root.tourSteps.length - 1 ? "Done" : "Next"
+                        highlighted: true
+                        onClicked: {
+                            if (root.tourIndex >= root.tourSteps.length - 1)
+                                tour.close()
+                            else
+                                root.tourIndex = root.tourIndex + 1
+                        }
+                    }
+                }
             }
         }
     }
@@ -1691,15 +2000,49 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     clip: true
+                    spacing: 6
                     model: root.devicesModel
 
                     delegate: ItemDelegate {
                         width: ListView.view.width
-                        text: "[" + modelData.device_kind + "] " + modelData.name
-                            + "\n" + modelData.path + "  " + hexId(modelData.vendor) + ":" + hexId(modelData.product)
-                            + "\n" + capabilitiesText(modelData.capabilities)
+                        height: 58
                         highlighted: ListView.isCurrentItem
                         onClicked: deviceList.currentIndex = index
+
+                        contentItem: RowLayout {
+                            spacing: 10
+
+                            Rectangle {
+                                Layout.alignment: Qt.AlignVCenter
+                                width: 10
+                                height: 10
+                                radius: 5
+                                color: modelData.device_kind === "virtual"
+                                    ? "#5b8def" : root.colAccent
+                            }
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 2
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: modelData.name
+                                    color: root.colText
+                                    font.pixelSize: 14
+                                    font.bold: true
+                                    elide: Text.ElideRight
+                                }
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: modelData.device_kind + " · " + modelData.path
+                                    color: root.colTextDim
+                                    font.pixelSize: 11
+                                    elide: Text.ElideRight
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1738,13 +2081,33 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     clip: true
+                    spacing: 6
                     model: root.profilesModel
 
                     delegate: ItemDelegate {
                         width: ListView.view.width
-                        text: modelData.name + "\n" + modelData.output_type + "  " + modelData.source_path
+                        height: 52
                         highlighted: ListView.isCurrentItem
                         onClicked: root.selectProfile(index)
+
+                        contentItem: ColumnLayout {
+                            spacing: 2
+                            Label {
+                                Layout.fillWidth: true
+                                text: modelData.name
+                                color: root.colText
+                                font.pixelSize: 14
+                                font.bold: true
+                                elide: Text.ElideRight
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                text: "output: " + modelData.output_type
+                                color: root.colTextDim
+                                font.pixelSize: 11
+                                elide: Text.ElideRight
+                            }
+                        }
                     }
                 }
             }
