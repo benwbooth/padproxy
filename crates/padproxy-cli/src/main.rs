@@ -4,6 +4,7 @@ use padproxy_core::autodetect::{
     decide_watch, detect_profile, match_profile, running_process_names, WatchDecision,
 };
 use padproxy_core::blocklist::{blocklist_path, load_blocklist};
+use padproxy_core::bluetooth::power_off;
 use padproxy_core::devices::DeviceInfo;
 use padproxy_core::leds::{list_leds, set_led_brightness, set_led_color, LedInfo};
 use padproxy_core::linux::{list_devices, resolve_device, resolve_device_info};
@@ -45,6 +46,10 @@ enum Command {
         color: Option<String>,
     },
     ListBlocklist,
+    PowerOff {
+        #[arg(long)]
+        controller: String,
+    },
     Detect,
     Watch {
         #[arg(long)]
@@ -205,6 +210,12 @@ fn main() -> Result<()> {
             for pattern in &blocklist.patterns {
                 println!("{pattern}");
             }
+            Ok(())
+        }
+        Command::PowerOff { controller } => {
+            let device = select_device(&controller)?;
+            power_off(&device)?;
+            eprintln!("Powered off {}", device_label(&device));
             Ok(())
         }
         Command::Detect => {

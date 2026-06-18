@@ -94,6 +94,13 @@ nix develop --command cargo run --bin padproxyctl -- set-led \
 `set-led` takes `--brightness <n>` (clamped to the LED's maximum) and/or
 `--color "r g b"` for RGB LEDs that expose `multi_intensity`.
 
+Power off a wireless controller (disconnects it over Bluetooth via BlueZ):
+
+```sh
+nix develop --command cargo run --bin padproxyctl -- power-off \
+  --controller 'Wireless Controller'
+```
+
 Detect which profile matches a running game/app:
 
 ```sh

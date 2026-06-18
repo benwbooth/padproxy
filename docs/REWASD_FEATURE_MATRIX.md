@@ -210,7 +210,9 @@ Joy-Cons) are tracked separately under Sensors/Grouping.
   capacity, charge status, and present/online state are read from Linux sysfs
   `power_supply` nodes and exposed through `padproxyctl list-batteries` and the
   diagnostics export.
-- Wireless controller power-off command.
+- Wireless controller power-off command. Done: `padproxyctl power-off`
+  disconnects a Bluetooth controller via BlueZ (`bluetoothctl disconnect`) using
+  the address from the device's `uniq`/`phys`.
 
 ## Overlays and Menus
 
