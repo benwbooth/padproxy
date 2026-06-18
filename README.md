@@ -21,7 +21,7 @@ The long-term reWASD-style feature target is tracked in
 
 ## Current Scope
 
-- Linux evdev controller discovery.
+- Linux evdev controller, keyboard, and mouse discovery.
 - YAML profile loading from profile directories.
 - Qt/QML controller/profile browser powered by a Rust `QObject`.
 - `padproxyctl launch` for running a command through a remapping profile.
@@ -85,12 +85,14 @@ Profiles are loaded from:
 The Qt UI can create and edit profiles from the Profiles pane. `New` starts a
 structured profile, the `Mappings` tab can edit rows through dropdowns or the
 Xbox/PlayStation/generic controller templates, and `Listen` can fill the active
-source or target control from the selected physical controller. The layer
+source or target control from the selected input device. The layer
 selector edits the main layer plus up to ten shift layers, each activated by a
 hold or toggle control. Layers can be renamed, copied, pasted, cleared, or
 removed from the structured editor. Individual mapping rows can map, disable,
-or turbo a button output, keyboard key, or mouse button, and analog axes can
-map directly to relative mouse axes for stick-to-mouse output. Button mappings
+or turbo a button output, keyboard key, or mouse button. Keyboard and mouse
+devices are selectable as sources, so key and mouse-button rows can map back to
+virtual controller buttons. Analog axes can map directly to relative mouse axes
+for stick-to-mouse output. Button mappings
 can fire on press, release, long press, double press, or triple press. Non-press activators
 fire discrete map taps, press macros, or commands; YAML can customize
 long/multi-press timing with `delay_ms`, `timeout_ms`, or `interval_ms`. The

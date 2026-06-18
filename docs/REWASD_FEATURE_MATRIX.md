@@ -47,7 +47,8 @@ Source pages consulted:
 - Controller to mouse mappings. Basic controller-button to mouse-button
   mappings done; relative mouse-axis output is available in YAML macros and
   direct analog-axis mappings.
-- Keyboard to controller mappings.
+- Keyboard to controller mappings. Basic keyboard-device discovery and
+  keyboard-key to virtual-controller mappings done.
 - Mouse to controller mappings. Basic mouse-button to controller-button
   mappings and relative mouse-motion to centered virtual-stick mappings done.
 - Native/hardware mappings that do not create an emulated device.
@@ -154,7 +155,9 @@ Source pages consulted:
 - NVIDIA Shield controller.
 - Azeron and keypad-style devices.
 - Generic HID gamepads.
-- Keyboard and mouse devices with initialization/detection mode.
+- Keyboard and mouse devices with initialization/detection mode. Basic Linux
+  evdev keyboard/mouse discovery done; richer initialization/detection flow
+  remains.
 - Mobile controller from Android/iOS.
 
 ## Device Grouping

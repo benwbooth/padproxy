@@ -1,6 +1,8 @@
 use crate::devices::DeviceInfo;
 use anyhow::Result;
-use evdev::{enumerate, AbsoluteAxisCode, Device, EventType, KeyCode};
+use evdev::{
+    enumerate, AbsoluteAxisCode, AttributeSetRef, Device, EventType, KeyCode, RelativeAxisCode,
+};
 use std::path::{Path, PathBuf};
 
 pub fn list_devices() -> Result<Vec<DeviceInfo>> {
@@ -52,12 +54,14 @@ pub fn resolve_device(selector: &str) -> Result<String> {
         .into_iter()
         .find(|device| device.id == selector || device.name == selector || device.path == selector)
         .map(|device| device.path)
-        .ok_or_else(|| anyhow::anyhow!("no controller matched {selector}"))
+        .ok_or_else(|| anyhow::anyhow!("no input device matched {selector}"))
 }
 
 fn should_show_device(path: &Path, device: &Device, name: &str, device_kind: &str) -> bool {
     name_has_controller_hint(name)
         || has_joystick_devlink(path)
+        || looks_like_keyboard(device)
+        || looks_like_mouse(device)
         || (device_kind == "virtual" && looks_like_controller(device))
 }
 
@@ -80,6 +84,24 @@ fn looks_like_controller(device: &Device) -> bool {
 
     let has_xy = abs.contains(AbsoluteAxisCode::ABS_X) && abs.contains(AbsoluteAxisCode::ABS_Y);
     has_face_button && has_xy
+}
+
+fn looks_like_keyboard(device: &Device) -> bool {
+    device
+        .supported_keys()
+        .map(|keys| key_set_has_keyboard_keys(keys))
+        .unwrap_or(false)
+}
+
+fn looks_like_mouse(device: &Device) -> bool {
+    let Some(keys) = device.supported_keys() else {
+        return false;
+    };
+    let Some(relative_axes) = device.supported_relative_axes() else {
+        return false;
+    };
+
+    key_set_has_mouse_buttons(keys) && relative_set_has_mouse_motion(relative_axes)
 }
 
 fn name_has_controller_hint(name: &str) -> bool {
@@ -182,6 +204,12 @@ fn capabilities(device: &Device) -> Vec<String> {
     let mut values = Vec::new();
 
     if let Some(keys) = device.supported_keys() {
+        if key_set_has_keyboard_keys(keys) {
+            values.push("KEYBOARD".to_string());
+        }
+        if key_set_has_mouse_buttons(keys) {
+            values.push("MOUSE_BUTTONS".to_string());
+        }
         for key in keys.iter() {
             let name = match key {
                 KeyCode::BTN_SOUTH => "BTN_SOUTH",
@@ -197,6 +225,17 @@ fn capabilities(device: &Device) -> Vec<String> {
                 KeyCode::BTN_MODE => "BTN_MODE",
                 KeyCode::BTN_THUMBL => "BTN_THUMBL",
                 KeyCode::BTN_THUMBR => "BTN_THUMBR",
+                KeyCode::KEY_SPACE => "KEY_SPACE",
+                KeyCode::KEY_ENTER => "KEY_ENTER",
+                KeyCode::KEY_ESC => "KEY_ESC",
+                KeyCode::KEY_TAB => "KEY_TAB",
+                KeyCode::KEY_LEFTCTRL => "KEY_LEFTCTRL",
+                KeyCode::KEY_LEFTSHIFT => "KEY_LEFTSHIFT",
+                KeyCode::KEY_LEFTALT => "KEY_LEFTALT",
+                KeyCode::KEY_A => "KEY_A",
+                KeyCode::KEY_S => "KEY_S",
+                KeyCode::KEY_D => "KEY_D",
+                KeyCode::KEY_W => "KEY_W",
                 _ => continue,
             };
             values.push(name.to_string());
@@ -220,9 +259,100 @@ fn capabilities(device: &Device) -> Vec<String> {
         }
     }
 
+    if let Some(relative_axes) = device.supported_relative_axes() {
+        if relative_set_has_mouse_motion(relative_axes) {
+            values.push("MOUSE_MOTION".to_string());
+        }
+        for axis in relative_axes.iter() {
+            let name = match axis {
+                RelativeAxisCode::REL_X => "REL_X",
+                RelativeAxisCode::REL_Y => "REL_Y",
+                RelativeAxisCode::REL_WHEEL => "REL_WHEEL",
+                RelativeAxisCode::REL_HWHEEL => "REL_HWHEEL",
+                _ => continue,
+            };
+            values.push(name.to_string());
+        }
+    }
+
     if device.supported_events().contains(EventType::FORCEFEEDBACK) {
         values.push("EV_FF".to_string());
     }
 
     values
+}
+
+fn key_set_has_keyboard_keys(keys: &AttributeSetRef<KeyCode>) -> bool {
+    let has_letter_cluster = [
+        KeyCode::KEY_A,
+        KeyCode::KEY_S,
+        KeyCode::KEY_D,
+        KeyCode::KEY_W,
+    ]
+    .iter()
+    .filter(|code| keys.contains(**code))
+    .count()
+        >= 2;
+    let has_control_key = [
+        KeyCode::KEY_SPACE,
+        KeyCode::KEY_ENTER,
+        KeyCode::KEY_ESC,
+        KeyCode::KEY_TAB,
+        KeyCode::KEY_LEFTCTRL,
+        KeyCode::KEY_LEFTSHIFT,
+        KeyCode::KEY_LEFTALT,
+    ]
+    .iter()
+    .any(|code| keys.contains(*code));
+
+    has_letter_cluster && has_control_key
+}
+
+fn key_set_has_mouse_buttons(keys: &AttributeSetRef<KeyCode>) -> bool {
+    keys.contains(KeyCode::BTN_LEFT) || keys.contains(KeyCode::BTN_RIGHT)
+}
+
+fn relative_set_has_mouse_motion(relative_axes: &AttributeSetRef<RelativeAxisCode>) -> bool {
+    relative_axes.contains(RelativeAxisCode::REL_X)
+        && relative_axes.contains(RelativeAxisCode::REL_Y)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        key_set_has_keyboard_keys, key_set_has_mouse_buttons, relative_set_has_mouse_motion,
+    };
+    use evdev::{AttributeSet, KeyCode, RelativeAxisCode};
+
+    #[test]
+    fn recognizes_real_keyboard_key_sets() {
+        let mut keys = AttributeSet::<KeyCode>::new();
+        keys.insert(KeyCode::KEY_A);
+        keys.insert(KeyCode::KEY_S);
+        keys.insert(KeyCode::KEY_SPACE);
+
+        assert!(key_set_has_keyboard_keys(&keys));
+
+        let mut power_keys = AttributeSet::<KeyCode>::new();
+        power_keys.insert(KeyCode::KEY_POWER);
+        power_keys.insert(KeyCode::KEY_SLEEP);
+        assert!(!key_set_has_keyboard_keys(&power_keys));
+    }
+
+    #[test]
+    fn recognizes_mouse_buttons_and_motion() {
+        let mut keys = AttributeSet::<KeyCode>::new();
+        keys.insert(KeyCode::BTN_LEFT);
+
+        let mut relative_axes = AttributeSet::<RelativeAxisCode>::new();
+        relative_axes.insert(RelativeAxisCode::REL_X);
+        relative_axes.insert(RelativeAxisCode::REL_Y);
+
+        assert!(key_set_has_mouse_buttons(&keys));
+        assert!(relative_set_has_mouse_motion(&relative_axes));
+
+        let mut wheel_only = AttributeSet::<RelativeAxisCode>::new();
+        wheel_only.insert(RelativeAxisCode::REL_WHEEL);
+        assert!(!relative_set_has_mouse_motion(&wheel_only));
+    }
 }
