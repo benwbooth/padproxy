@@ -8,7 +8,6 @@ Window {
     flags: Qt.FramelessWindowHint
         | Qt.WindowStaysOnTopHint
         | Qt.WindowTransparentForInput
-        | Qt.Tool
     color: "transparent"
     visible: true
     width: badge.width

@@ -10,7 +10,6 @@ Window {
     flags: Qt.FramelessWindowHint
         | Qt.WindowStaysOnTopHint
         | Qt.WindowTransparentForInput
-        | Qt.Tool
 
     // Crosshair appearance.
     property color lineColor: "#00ff66"

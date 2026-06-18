@@ -9,7 +9,7 @@ Window {
     visible: true
     visibility: Window.FullScreen
     color: "#88000000"
-    flags: Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool
+    flags: Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
 
     property var items: defaultItems()
     function defaultItems() {
