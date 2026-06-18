@@ -128,11 +128,16 @@ Source pages consulted:
 
 ## Output Devices
 
-- Virtual Xbox 360.
-- Virtual Xbox One / Series.
-- Virtual DualShock 4.
-- Virtual DualSense.
-- Virtual Switch Pro.
+- Virtual Xbox 360. Done through a Linux uinput device with the Xbox 360
+  USB identity.
+- Virtual Xbox One / Series. Done through a Linux uinput device with the Xbox
+  One USB identity.
+- Virtual DualShock 4. Done through a Linux uinput device with the DualShock 4
+  USB identity.
+- Virtual DualSense. Done through a Linux uinput device with the DualSense USB
+  identity.
+- Virtual Switch Pro. Done through a Linux uinput device with the Switch Pro
+  USB identity.
 - Keyboard output. Basic keyboard-key capabilities are added to the Linux
   uinput virtual device when profile mappings or macros target them.
 - Mouse output. Basic mouse-button and relative-axis capabilities are added to
@@ -208,7 +213,7 @@ Source pages consulted:
 2. Add clickable SVG controller images for Xbox, PlayStation, and generic pads. Done.
 3. Add hook mode to pick source and target controls by pressing buttons. Done.
 4. Add remap ON/OFF/apply lifecycle from the GUI. Done.
-5. Add virtual output type selection and hide/grab policy controls. Done for implemented outputs; planned outputs are visible but disabled until their virtual-device backends exist.
+5. Add virtual output type selection and hide/grab policy controls. Done; the Xbox 360, Xbox One, DualShock 4, DualSense, and Switch Pro virtual outputs each emulate their own USB identity through uinput and can all be applied.
 6. Add layers, then activators, then macros. Basic main/shift layers are done with hold/toggle activation, disable mappings, held-button turbo, press/release/long/double/triple controller activators, press-triggered controller/keyboard/mouse-button macros, relative mouse macro events, and hold-until-release controller macros; richer activators and macros remain.
 7. Add analog tuning. Basic per-axis deadzone, sensitivity, response curves, custom curve exponent, held-output zones, stick rotation, stick swap, digital 8-way stick mode, inversion, and output range are done.
 8. Add process autodetect and Lunchbox integration.

@@ -228,7 +228,7 @@ impl RemapRuntime {
             .context("failed to make source device nonblocking")?;
 
         let mut virtual_pad =
-            create_virtual_xbox_pad(&options.profile).context("failed to create virtual pad")?;
+            create_virtual_pad(&options.profile).context("failed to create virtual pad")?;
         let virtual_nodes = virtual_pad
             .enumerate_dev_nodes_blocking()
             .ok()
@@ -1327,7 +1327,15 @@ fn digital_axis_direction(unit_value: f64, threshold: f64) -> i32 {
     }
 }
 
-fn create_virtual_xbox_pad(profile: &Profile) -> Result<VirtualDevice> {
+fn create_virtual_pad(profile: &Profile) -> Result<VirtualDevice> {
+    let descriptor = output_device(&profile.output_type).ok_or_else(|| {
+        anyhow!(
+            "unknown virtual output {}; supported outputs: {}",
+            profile.output_type,
+            supported_output_ids().join(", ")
+        )
+    })?;
+
     let mut keys = AttributeSet::<KeyCode>::new();
     for key in [
         KeyCode::BTN_SOUTH,
@@ -1360,8 +1368,13 @@ fn create_virtual_xbox_pad(profile: &Profile) -> Result<VirtualDevice> {
     }
 
     let mut builder = VirtualDevice::builder()?
-        .name("PadProxy Virtual Xbox 360 Controller")
-        .input_id(InputId::new(BusType::BUS_USB, 0x045e, 0x028e, 0x0114))
+        .name(descriptor.virtual_name)
+        .input_id(InputId::new(
+            BusType::BUS_USB,
+            descriptor.vendor,
+            descriptor.product,
+            descriptor.version,
+        ))
         .with_keys(&keys)?;
 
     for setup in [

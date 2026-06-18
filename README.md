@@ -158,11 +158,13 @@ result to
 `~/.config/padproxy/profiles.d`. Packaged profiles are read-only; saving one
 creates a user copy with the same profile id.
 
-The implemented virtual output today is `xbox360`: PadProxy creates an
-Xbox-360-compatible uinput device and adds keyboard/mouse capabilities when the
-profile targets them. Other reWASD-style virtual controller outputs are listed
-by the UI and `padproxyctl list-outputs` as planned, but they are intentionally
-not selectable for Apply until those device backends exist.
+PadProxy can emulate several controller types through `/dev/uinput`: `xbox360`,
+`xboxone`, `ds4` (DualShock 4), `dualsense`, and `switchpro`. Each output
+advertises its own USB vendor/product identity and device name so games and
+Steam Input recognize the emulated controller and apply the matching button
+glyphs, while keyboard/mouse capabilities are added when the profile targets
+them. Select the output per profile with the `output:` key (or in the GUI), and
+list every available output with `padproxyctl list-outputs`.
 
 Example:
 

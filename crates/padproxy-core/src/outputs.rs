@@ -6,6 +6,15 @@ pub struct OutputDeviceInfo {
     pub label: &'static str,
     pub supported: bool,
     pub note: &'static str,
+    /// Name advertised by the virtual uinput device.
+    pub virtual_name: &'static str,
+    /// USB vendor id reported by the virtual device so games and Steam Input
+    /// recognize it as the emulated controller type.
+    pub vendor: u16,
+    /// USB product id reported by the virtual device.
+    pub product: u16,
+    /// Device version reported by the virtual device.
+    pub version: u16,
 }
 
 pub const OUTPUT_DEVICES: &[OutputDeviceInfo] = &[
@@ -14,30 +23,50 @@ pub const OUTPUT_DEVICES: &[OutputDeviceInfo] = &[
         label: "Xbox 360",
         supported: true,
         note: "Implemented through Linux uinput.",
+        virtual_name: "PadProxy Virtual Xbox 360 Controller",
+        vendor: 0x045e,
+        product: 0x028e,
+        version: 0x0114,
     },
     OutputDeviceInfo {
         id: "xboxone",
         label: "Xbox One / Series",
-        supported: false,
-        note: "Planned virtual output.",
+        supported: true,
+        note: "Implemented through Linux uinput.",
+        virtual_name: "PadProxy Virtual Xbox One Controller",
+        vendor: 0x045e,
+        product: 0x02ea,
+        version: 0x0408,
     },
     OutputDeviceInfo {
         id: "ds4",
         label: "DualShock 4",
-        supported: false,
-        note: "Planned virtual output.",
+        supported: true,
+        note: "Implemented through Linux uinput.",
+        virtual_name: "PadProxy Virtual DualShock 4 Controller",
+        vendor: 0x054c,
+        product: 0x09cc,
+        version: 0x8111,
     },
     OutputDeviceInfo {
         id: "dualsense",
         label: "DualSense",
-        supported: false,
-        note: "Planned virtual output.",
+        supported: true,
+        note: "Implemented through Linux uinput.",
+        virtual_name: "PadProxy Virtual DualSense Controller",
+        vendor: 0x054c,
+        product: 0x0ce6,
+        version: 0x8111,
     },
     OutputDeviceInfo {
         id: "switchpro",
         label: "Switch Pro",
-        supported: false,
-        note: "Planned virtual output.",
+        supported: true,
+        note: "Implemented through Linux uinput.",
+        virtual_name: "PadProxy Virtual Switch Pro Controller",
+        vendor: 0x057e,
+        product: 0x2009,
+        version: 0x0001,
     },
 ];
 
@@ -84,7 +113,7 @@ pub fn supported_output_ids() -> Vec<&'static str> {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_output_type, output_device, output_type_supported};
+    use super::{normalize_output_type, output_device, output_devices, output_type_supported};
 
     #[test]
     fn normalizes_common_output_aliases() {
@@ -95,12 +124,33 @@ mod tests {
     }
 
     #[test]
-    fn reports_supported_and_planned_outputs() {
+    fn reports_supported_outputs() {
         assert!(output_type_supported("xbox360"));
-        assert!(!output_type_supported("dualsense"));
+        assert!(output_type_supported("dualsense"));
         assert_eq!(
             output_device("xboxone").map(|output| output.label),
             Some("Xbox One / Series")
         );
+    }
+
+    #[test]
+    fn carries_distinct_usb_identities_per_output() {
+        let ds4 = output_device("ds4").expect("ds4 descriptor");
+        assert_eq!(ds4.vendor, 0x054c);
+        assert_eq!(ds4.product, 0x09cc);
+        assert_eq!(ds4.virtual_name, "PadProxy Virtual DualShock 4 Controller");
+
+        let switchpro = output_device("switchpro").expect("switchpro descriptor");
+        assert_eq!(switchpro.vendor, 0x057e);
+
+        // Every supported output advertises a unique vendor/product pair.
+        let mut identities: Vec<(u16, u16)> = output_devices()
+            .iter()
+            .map(|output| (output.vendor, output.product))
+            .collect();
+        identities.sort_unstable();
+        let unique = identities.len();
+        identities.dedup();
+        assert_eq!(identities.len(), unique, "duplicate USB identity");
     }
 }
