@@ -135,19 +135,39 @@ fn looks_like_mouse(device: &Device) -> bool {
 
 fn name_has_controller_hint(name: &str) -> bool {
     let name = name.to_ascii_lowercase();
+    // Names that, on their own, identify a controller family.
     let direct_match = [
-        "controller",
         "gamepad",
         "joystick",
         "joypad",
+        "joy-con",
+        "joycon",
+        "joy con",
         "x-box",
         "xbox",
+        "xinput",
         "dualshock",
         "dualsense",
-        "steam",
+        "playstation",
+        "sony interactive",
+        "steam controller",
+        "steam deck",
+        "steam virtual",
+        "nintendo",
+        "switch pro",
+        "gamecube",
+        "gc controller",
+        "stadia",
+        "shield",
+        "8bitdo",
+        "horipad",
+        "hori ",
+        "powera",
+        "azeron",
+        "elite",
+        "navigation",
     ]
     .iter()
-    .filter(|hint| **hint != "controller")
     .any(|hint| name.contains(hint));
 
     direct_match
@@ -349,9 +369,38 @@ fn relative_set_has_mouse_motion(relative_axes: &AttributeSetRef<RelativeAxisCod
 #[cfg(test)]
 mod tests {
     use super::{
-        key_set_has_keyboard_keys, key_set_has_mouse_buttons, relative_set_has_mouse_motion,
+        key_set_has_keyboard_keys, key_set_has_mouse_buttons, name_has_controller_hint,
+        relative_set_has_mouse_motion,
     };
     use evdev::{AttributeSet, KeyCode, RelativeAxisCode};
+
+    #[test]
+    fn recognizes_controller_families_by_name() {
+        for name in [
+            "Microsoft X-Box 360 pad",
+            "Sony Interactive Entertainment DualSense Wireless Controller",
+            "Nintendo Switch Pro Controller",
+            "Joy-Con (L)",
+            "Steam Deck Controller",
+            "Valve Steam Controller",
+            "Google Stadia Controller",
+            "NVIDIA Shield Controller",
+            "8BitDo SN30 Pro",
+            "Mayflash GameCube Controller Adapter",
+        ] {
+            assert!(
+                name_has_controller_hint(name),
+                "should recognize controller: {name}"
+            );
+        }
+
+        for name in ["USB Webcam", "AT Translated Set 2 keyboard", "Power Button"] {
+            assert!(
+                !name_has_controller_hint(name),
+                "should not flag non-controller: {name}"
+            );
+        }
+    }
 
     #[test]
     fn recognizes_real_keyboard_key_sets() {

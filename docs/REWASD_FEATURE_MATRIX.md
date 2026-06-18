@@ -154,20 +154,27 @@ Source pages consulted:
 
 ## Device Support
 
-- Xbox 360 / One / Series.
-- Xbox Elite paddles.
-- DualShock 3 / 4.
-- DualSense / DualSense Edge.
-- PlayStation Navigation controller.
-- Steam Controller.
-- Steam Deck controller.
-- Nintendo Switch Pro.
-- Nintendo Joy-Con pairs and individual Joy-Cons.
-- GameCube controllers.
-- Stadia controller.
-- NVIDIA Shield controller.
-- Azeron and keypad-style devices.
-- Generic HID gamepads.
+Discovery and remapping work for any standard Linux evdev controller. The
+families below are recognized by name so they appear in the device list and can
+be remapped; device-specific extras (Elite paddles, gyro, touchpad, individual
+Joy-Cons) are tracked separately under Sensors/Grouping.
+
+- Xbox 360 / One / Series. Recognized and remappable.
+- Xbox Elite paddles. Pad recognized; paddle-specific buttons remain.
+- DualShock 3 / 4. Recognized and remappable.
+- DualSense / DualSense Edge. Recognized and remappable.
+- PlayStation Navigation controller. Recognized by name.
+- Steam Controller. Recognized and remappable.
+- Steam Deck controller. Recognized and remappable.
+- Nintendo Switch Pro. Recognized and remappable.
+- Nintendo Joy-Con pairs and individual Joy-Cons. Joy-Cons recognized; pairing
+  two into one virtual controller uses device grouping.
+- GameCube controllers. Recognized and remappable.
+- Stadia controller. Recognized and remappable.
+- NVIDIA Shield controller. Recognized and remappable.
+- Azeron and keypad-style devices. Recognized by name.
+- Generic HID gamepads. Done: any evdev gamepad with face buttons and X/Y axes
+  is discovered and remappable.
 - Keyboard and mouse devices with initialization/detection mode. Basic Linux
   evdev keyboard/mouse discovery done; richer initialization/detection flow
   remains.
