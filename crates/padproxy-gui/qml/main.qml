@@ -579,6 +579,58 @@ ApplicationWindow {
         return Math.max(10, Math.min(5000, Math.round(number)))
     }
 
+    function normalizedDurationMs(value, fallback) {
+        const number = Number(value)
+        if (!Number.isFinite(number))
+            return fallback
+        return Math.max(0, Math.min(600000, Math.round(number)))
+    }
+
+    function defaultMacroDurationMs(mode) {
+        return mode === "hold" ? 0 : 20
+    }
+
+    function defaultMacroReleaseDurationMs(mode) {
+        return 0
+    }
+
+    function macroDurationMsForRow(row) {
+        if (!row)
+            return 0
+        return root.normalizedDurationMs(
+            row.macroDurationMs,
+            root.defaultMacroDurationMs(row.macroMode || "press")
+        )
+    }
+
+    function macroReleaseDurationMsForRow(row) {
+        if (!row)
+            return 0
+        return root.normalizedDurationMs(
+            row.macroReleaseDurationMs,
+            root.defaultMacroReleaseDurationMs(row.macroMode || "press")
+        )
+    }
+
+    function macroDurationTextForValues(mode, durationMs, releaseDurationMs) {
+        if (mode === "hold") {
+            if (durationMs === 0 && releaseDurationMs === 0)
+                return "hold"
+            return "hold " + durationMs + " ms / " + releaseDurationMs + " ms"
+        }
+        return durationMs + " ms"
+    }
+
+    function macroDurationText(row) {
+        if (!row)
+            return ""
+        return root.macroDurationTextForValues(
+            row.macroMode || "press",
+            root.macroDurationMsForRow(row),
+            root.macroReleaseDurationMsForRow(row)
+        )
+    }
+
     function normalizedPercent(value, fallback, minValue, maxValue) {
         const number = Number(value)
         if (!Number.isFinite(number))
@@ -858,6 +910,8 @@ ApplicationWindow {
                 action: row.action || "map",
                 activatorKind: row.activatorKind || "press",
                 macroMode: row.macroMode || "press",
+                macroDurationMs: root.macroDurationMsForRow(row),
+                macroReleaseDurationMs: root.macroReleaseDurationMsForRow(row),
                 commandAction: row.commandAction || "stop_macros",
                 commandLine: row.commandLine || "",
                 turboEnabled: row.turboEnabled === true,
@@ -876,6 +930,8 @@ ApplicationWindow {
                 action: rows[i].action || "map",
                 activatorKind: rows[i].activatorKind || "press",
                 macroMode: rows[i].macroMode || "press",
+                macroDurationMs: root.macroDurationMsForRow(rows[i]),
+                macroReleaseDurationMs: root.macroReleaseDurationMsForRow(rows[i]),
                 commandAction: rows[i].commandAction || "stop_macros",
                 commandLine: rows[i].commandLine || "",
                 turboEnabled: rows[i].turboEnabled === true,
@@ -898,6 +954,8 @@ ApplicationWindow {
                 action: action,
                 activatorKind: root.mappingActivatorFromProfile(mappings[i]),
                 macroMode: action === "macro" ? root.macroModeFromProfile(mappings[i]) : "press",
+                macroDurationMs: action === "macro" ? root.macroDurationFromProfile(mappings[i]) : 20,
+                macroReleaseDurationMs: action === "macro" ? root.macroReleaseDurationFromProfile(mappings[i]) : 0,
                 commandAction: action === "command" ? root.commandActionFromProfile(mappings[i]) : "stop_macros",
                 commandLine: action === "command" ? root.commandLineFromProfile(mappings[i]) : "",
                 turboEnabled: turbo !== null,
@@ -920,6 +978,22 @@ ApplicationWindow {
     function macroModeFromProfile(mapping) {
         const macro = mapping && mapping.macro ? mapping.macro : null
         return macro && macro.mode === "hold" ? "hold" : "press"
+    }
+
+    function macroDurationFromProfile(mapping) {
+        const macro = mapping && mapping.macro ? mapping.macro : null
+        return root.normalizedDurationMs(
+            macro && macro.duration_ms !== undefined ? macro.duration_ms : undefined,
+            root.defaultMacroDurationMs(root.macroModeFromProfile(mapping))
+        )
+    }
+
+    function macroReleaseDurationFromProfile(mapping) {
+        const macro = mapping && mapping.macro ? mapping.macro : null
+        return root.normalizedDurationMs(
+            macro && macro.release_duration_ms !== undefined ? macro.release_duration_ms : undefined,
+            root.defaultMacroReleaseDurationMs(root.macroModeFromProfile(mapping))
+        )
     }
 
     function mappingActivatorFromProfile(mapping) {
@@ -949,6 +1023,8 @@ ApplicationWindow {
                 action: rows[i].action || "map",
                 activatorKind: rows[i].activatorKind || "press",
                 macroMode: rows[i].macroMode || "press",
+                macroDurationMs: root.macroDurationMsForRow(rows[i]),
+                macroReleaseDurationMs: root.macroReleaseDurationMsForRow(rows[i]),
                 commandAction: rows[i].commandAction || "stop_macros",
                 commandLine: rows[i].commandLine || "",
                 turboEnabled: rows[i].turboEnabled === true,
@@ -1217,6 +1293,8 @@ ApplicationWindow {
             action: "map",
             activatorKind: "press",
             macroMode: "press",
+            macroDurationMs: 20,
+            macroReleaseDurationMs: 0,
             commandAction: "stop_macros",
             commandLine: "",
             turboEnabled: false,
@@ -2527,6 +2605,7 @@ ApplicationWindow {
                                                 return prefix + activatorSuffix + " macro "
                                                     + (row.macroMode === "hold" ? "hold " : "tap ")
                                                     + root.eventLabel(row.toCode)
+                                                    + " (" + root.macroDurationText(row) + ")"
                                             return prefix + activatorSuffix + " -> " + root.eventLabel(row.toCode)
                                                 + (row.turboEnabled === true ? " turbo" : "")
                                         })()
@@ -2619,6 +2698,11 @@ ApplicationWindow {
                                                         mappingsModel.setProperty(index, "macroMode", "press")
                                                     if (nextAction === "macro" && macroMode === "hold" && activatorKind !== "press")
                                                         mappingsModel.setProperty(index, "activatorKind", "press")
+                                                    if (nextAction === "macro") {
+                                                        const nextMode = macroMode || "press"
+                                                        mappingsModel.setProperty(index, "macroDurationMs", root.defaultMacroDurationMs(nextMode))
+                                                        mappingsModel.setProperty(index, "macroReleaseDurationMs", root.defaultMacroReleaseDurationMs(nextMode))
+                                                    }
                                                     if (nextAction === "command" && !commandAction)
                                                         mappingsModel.setProperty(index, "commandAction", "stop_macros")
                                                     if (nextAction !== "command")
@@ -2677,6 +2761,10 @@ ApplicationWindow {
                                                     root.selectedMappingIndex = index
                                                     root.selectedMappingSide = "to"
                                                     mappingsModel.setProperty(index, "toCode", currentText)
+                                                    if (action === "macro") {
+                                                        mappingsModel.setProperty(index, "macroDurationMs", root.defaultMacroDurationMs(macroMode || "press"))
+                                                        mappingsModel.setProperty(index, "macroReleaseDurationMs", root.defaultMacroReleaseDurationMs(macroMode || "press"))
+                                                    }
                                                 }
                                                 ToolTip.visible: hovered
                                                 ToolTip.text: root.eventLabel(currentText)
@@ -2722,9 +2810,34 @@ ApplicationWindow {
                                                 Layout.preferredWidth: 72
                                                 onToggled: {
                                                     root.selectedMappingIndex = index
-                                                    mappingsModel.setProperty(index, "macroMode", checked ? "hold" : "press")
+                                                    const nextMode = checked ? "hold" : "press"
+                                                    mappingsModel.setProperty(index, "macroMode", nextMode)
+                                                    mappingsModel.setProperty(index, "macroDurationMs", root.defaultMacroDurationMs(nextMode))
+                                                    mappingsModel.setProperty(index, "macroReleaseDurationMs", root.defaultMacroReleaseDurationMs(nextMode))
                                                     if (checked)
                                                         mappingsModel.setProperty(index, "activatorKind", "press")
+                                                }
+                                            }
+
+                                            Label {
+                                                text: root.macroDurationText({
+                                                    macroMode: macroMode,
+                                                    macroDurationMs: macroDurationMs,
+                                                    macroReleaseDurationMs: macroReleaseDurationMs
+                                                })
+                                                visible: action === "macro"
+                                                Layout.preferredWidth: 92
+                                                elide: Text.ElideRight
+                                                ToolTip.visible: visible && ma.containsMouse
+                                                ToolTip.text: macroMode === "hold"
+                                                    ? "Entry / release macro duration"
+                                                    : "Macro duration"
+
+                                                MouseArea {
+                                                    id: ma
+                                                    anchors.fill: parent
+                                                    hoverEnabled: true
+                                                    acceptedButtons: Qt.NoButton
                                                 }
                                             }
 

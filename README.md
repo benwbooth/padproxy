@@ -104,6 +104,7 @@ Digital stick rows convert a stick pair into the virtual D-pad with 8-way
 diagonal output.
 Macro rows can tap a virtual button/key/mouse button from the
 structured editor or hold a virtual button until the source is released; the
+editor displays the parsed macro duration beside each macro row. The
 raw YAML editor also supports explicit controller/keyboard/mouse button down/up
 events, relative mouse-axis events with `rel` plus `value`, axis set events,
 release-side events, and pauses. Command rows can run PadProxy commands such as

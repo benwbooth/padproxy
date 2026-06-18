@@ -15,6 +15,7 @@ pub const MAX_SHIFT_LAYERS: usize = 10;
 pub const DEFAULT_TURBO_INTERVAL_MS: u64 = 75;
 pub const DEFAULT_LONG_PRESS_MS: u64 = 450;
 pub const DEFAULT_MULTI_PRESS_MS: u64 = 300;
+pub const MACRO_TAP_RELEASE_MS: u64 = 20;
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct DeviceMatch {
@@ -86,6 +87,8 @@ pub struct MacroSettings {
     pub mode: MacroMode,
     pub events: Vec<MacroEvent>,
     pub release_events: Vec<MacroEvent>,
+    pub duration_ms: u64,
+    pub release_duration_ms: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -1483,10 +1486,15 @@ fn parse_macro_settings(
         (MacroMode::Hold, None) => automatic_hold_release_events(&events),
     };
 
+    let duration_ms = macro_events_duration_ms(&events);
+    let release_duration_ms = macro_events_duration_ms(&release_events);
+
     Ok(Some(MacroSettings {
         mode,
         events,
         release_events,
+        duration_ms,
+        release_duration_ms,
     }))
 }
 
@@ -1560,6 +1568,19 @@ fn automatic_hold_release_events(events: &[MacroEvent]) -> Vec<MacroEvent> {
     }
 
     release_events
+}
+
+fn macro_events_duration_ms(events: &[MacroEvent]) -> u64 {
+    events.iter().fold(0_u64, |duration, event| {
+        duration.saturating_add(match event.kind {
+            MacroEventKind::Tap => MACRO_TAP_RELEASE_MS,
+            MacroEventKind::Pause => event.pause_ms,
+            MacroEventKind::Down
+            | MacroEventKind::Up
+            | MacroEventKind::Axis
+            | MacroEventKind::Relative => 0,
+        })
+    })
 }
 
 fn parse_macro_event(
@@ -2743,6 +2764,8 @@ mappings:
         assert_eq!(macro_settings.events[4].kind, MacroEventKind::Axis);
         assert_eq!(macro_settings.events[4].code_name, "abs:x");
         assert_eq!(macro_settings.events[4].value, 12000);
+        assert_eq!(macro_settings.duration_ms, 80);
+        assert_eq!(macro_settings.release_duration_ms, 0);
     }
 
     #[test]
@@ -2772,6 +2795,8 @@ mappings:
         assert_eq!(macro_settings.mode, MacroMode::Hold);
         assert_eq!(macro_settings.events.len(), 2);
         assert_eq!(macro_settings.release_events.len(), 2);
+        assert_eq!(macro_settings.duration_ms, 0);
+        assert_eq!(macro_settings.release_duration_ms, 0);
         assert_eq!(macro_settings.release_events[0].kind, MacroEventKind::Axis);
         assert_eq!(macro_settings.release_events[0].code_name, "abs:x");
         assert_eq!(macro_settings.release_events[0].value, 0);

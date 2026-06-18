@@ -85,7 +85,8 @@ Source pages consulted:
 - Execute-at-once macros. Done for press-triggered controller macros.
 - Hold-until-release macros. Basic controller hold macros done.
 - Relative stick deflection in macros.
-- Macro duration display.
+- Macro duration display. Basic parsed duration display done in the structured
+  editor for press and hold macros.
 - Stop all macros shortcut. Done as a controller command mapping.
 
 ## Layers and Slots

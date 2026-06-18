@@ -4,6 +4,7 @@ use crate::profiles::{
     ActivatorKind, ActivatorSettings, AnalogTuning, CommandAction, CommandSettings,
     DigitalStickMapping, LayerActivation, LayerActivationMode, MacroEvent, MacroEventKind,
     MacroMode, MacroSettings, Mapping, MappingAction, Profile, StickTransformMapping,
+    MACRO_TAP_RELEASE_MS,
 };
 use anyhow::{anyhow, Context, Result};
 use evdev::uinput::VirtualDevice;
@@ -797,8 +798,6 @@ impl RemapRuntime {
     }
 
     fn enqueue_macro_sequence(&mut self, events: &[MacroEvent]) {
-        const TAP_RELEASE_MS: u64 = 20;
-
         let now = Instant::now();
         let mut offset = Duration::ZERO;
 
@@ -814,7 +813,7 @@ impl RemapRuntime {
                             event: code,
                             value: 1,
                         });
-                        offset += Duration::from_millis(TAP_RELEASE_MS);
+                        offset += Duration::from_millis(MACRO_TAP_RELEASE_MS);
                         self.queue_macro_event(ScheduledMacroEvent {
                             due: now + offset,
                             event: code,
