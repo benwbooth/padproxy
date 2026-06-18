@@ -323,6 +323,9 @@ struct RawMacroEvent {
     up: Option<String>,
     tap: Option<String>,
     axis: Option<String>,
+    stick: Option<String>,
+    x: Option<f64>,
+    y: Option<f64>,
     rel: Option<String>,
     value: Option<i32>,
     pause_ms: Option<u64>,
@@ -1496,7 +1499,7 @@ fn parse_macro_settings(
 
     let mut events = Vec::new();
     for (index, raw_event) in raw_events.into_iter().enumerate() {
-        events.push(parse_macro_event(raw_event, index, from_name, context)?);
+        events.extend(parse_macro_event(raw_event, index, from_name, context)?);
     }
 
     let release_events = match (mode, raw_release_events) {
@@ -1514,7 +1517,7 @@ fn parse_macro_settings(
             }
             let mut parsed = Vec::new();
             for (index, raw_event) in raw_release_events.into_iter().enumerate() {
-                parsed.push(parse_macro_event(raw_event, index, from_name, context)?);
+                parsed.extend(parse_macro_event(raw_event, index, from_name, context)?);
             }
             parsed
         }
@@ -1632,12 +1635,13 @@ fn parse_macro_event(
     index: usize,
     from_name: &str,
     context: &str,
-) -> Result<MacroEvent> {
+) -> Result<Vec<MacroEvent>> {
     let specified = [
         raw.down.is_some(),
         raw.up.is_some(),
         raw.tap.is_some(),
         raw.axis.is_some(),
+        raw.stick.is_some(),
         raw.rel.is_some(),
         raw.pause_ms.is_some(),
         raw.cancel.is_some(),
@@ -1650,7 +1654,14 @@ fn parse_macro_event(
 
     if specified != 1 {
         return Err(anyhow!(
-            "macro event {} from {from_name} in {context} must set exactly one of down, up, tap, axis, rel, pause_ms, cancel, break, or stop",
+            "macro event {} from {from_name} in {context} must set exactly one of down, up, tap, axis, stick, rel, pause_ms, cancel, break, or stop",
+            index + 1
+        ));
+    }
+
+    if raw.stick.is_none() && (raw.x.is_some() || raw.y.is_some()) {
+        return Err(anyhow!(
+            "macro event {} from {from_name} in {context} can only use x or y with stick",
             index + 1
         ));
     }
@@ -1663,13 +1674,13 @@ fn parse_macro_event(
                 index + 1
             ));
         }
-        return Ok(MacroEvent {
+        return Ok(vec![MacroEvent {
             kind: MacroEventKind::Cancel,
             code: None,
             code_name: String::new(),
             value: 0,
             pause_ms: 0,
-        });
+        }]);
     }
 
     if let Some(pause_ms) = raw.pause_ms {
@@ -1679,46 +1690,56 @@ fn parse_macro_event(
                 index + 1
             ));
         }
-        return Ok(MacroEvent {
+        return Ok(vec![MacroEvent {
             kind: MacroEventKind::Pause,
             code: None,
             code_name: String::new(),
             value: 0,
             pause_ms,
-        });
+        }]);
     }
 
     if let Some(code) = raw.down {
         let code = parse_macro_target(&code, MacroEventKind::Down, index, from_name, context)?;
-        return Ok(MacroEvent {
+        return Ok(vec![MacroEvent {
             kind: MacroEventKind::Down,
             code: Some(code),
             code_name: code.name(),
             value: 1,
             pause_ms: 0,
-        });
+        }]);
     }
 
     if let Some(code) = raw.up {
         let code = parse_macro_target(&code, MacroEventKind::Up, index, from_name, context)?;
-        return Ok(MacroEvent {
+        return Ok(vec![MacroEvent {
             kind: MacroEventKind::Up,
             code: Some(code),
             code_name: code.name(),
             value: 0,
             pause_ms: 0,
-        });
+        }]);
     }
 
     if let Some(code) = raw.tap {
         let code = parse_macro_target(&code, MacroEventKind::Tap, index, from_name, context)?;
-        return Ok(MacroEvent {
+        return Ok(vec![MacroEvent {
             kind: MacroEventKind::Tap,
             code: Some(code),
             code_name: code.name(),
             value: 1,
             pause_ms: 0,
-        });
+        }]);
+    }
+
+    if let Some(stick) = raw.stick {
+        if raw.value.is_some() {
+            return Err(anyhow!(
+                "macro stick event {} from {from_name} in {context} must use x or y, not value",
+                index + 1
+            ));
+        }
+        return parse_macro_stick_event(&stick, raw.x, raw.y, index, from_name, context);
     }
 
     if let Some(code) = raw.rel {
@@ -1735,13 +1756,13 @@ fn parse_macro_event(
                 index + 1
             ));
         }
-        return Ok(MacroEvent {
+        return Ok(vec![MacroEvent {
             kind: MacroEventKind::Relative,
             code: Some(code),
             code_name: code.name(),
             value,
             pause_ms: 0,
-        });
+        }]);
     }
 
     let code = raw
@@ -1769,13 +1790,96 @@ fn parse_macro_event(
         ));
     }
 
-    Ok(MacroEvent {
+    Ok(vec![MacroEvent {
         kind: MacroEventKind::Axis,
         code: Some(code),
         code_name: code.name(),
         value,
         pause_ms: 0,
+    }])
+}
+
+fn parse_macro_stick_event(
+    stick: &str,
+    x: Option<f64>,
+    y: Option<f64>,
+    index: usize,
+    from_name: &str,
+    context: &str,
+) -> Result<Vec<MacroEvent>> {
+    let (x_axis_name, y_axis_name) = match normalize_mapping_keyword(stick).as_str() {
+        "left" | "left_stick" | "ls" | "l" => ("abs:x", "abs:y"),
+        "right" | "right_stick" | "rs" | "r" => ("abs:rx", "abs:ry"),
+        other => {
+            return Err(anyhow!(
+                "macro stick event {} from {from_name} in {context} has unknown stick {other}",
+                index + 1
+            ))
+        }
+    };
+
+    if x.is_none() && y.is_none() {
+        return Err(anyhow!(
+            "macro stick event {} from {from_name} in {context} requires x or y",
+            index + 1
+        ));
+    }
+
+    let mut events = Vec::new();
+    if let Some(x) = x {
+        events.push(macro_stick_axis_event(
+            x_axis_name,
+            x,
+            "x",
+            index,
+            from_name,
+            context,
+        )?);
+    }
+    if let Some(y) = y {
+        events.push(macro_stick_axis_event(
+            y_axis_name,
+            y,
+            "y",
+            index,
+            from_name,
+            context,
+        )?);
+    }
+    Ok(events)
+}
+
+fn macro_stick_axis_event(
+    axis_name: &str,
+    unit_value: f64,
+    component_name: &str,
+    index: usize,
+    from_name: &str,
+    context: &str,
+) -> Result<MacroEvent> {
+    if !unit_value.is_finite() || !(-1.0..=1.0).contains(&unit_value) {
+        return Err(anyhow!(
+            "macro stick {component_name} value for event {} from {from_name} in {context} must stay within -1.0..1.0",
+            index + 1
+        ));
+    }
+
+    let axis = parse_event_code(axis_name).expect("built-in stick axis names are valid");
+    Ok(MacroEvent {
+        kind: MacroEventKind::Axis,
+        code: Some(axis),
+        code_name: axis.name(),
+        value: stick_unit_to_axis_value(axis, unit_value),
+        pause_ms: 0,
     })
+}
+
+fn stick_unit_to_axis_value(axis: EventCode, unit_value: f64) -> i32 {
+    let range = AxisRange::for_event(axis).expect("stick axes are absolute axes");
+    let max_abs = range.max.unsigned_abs().max(range.min.unsigned_abs()) as f64;
+    (unit_value.clamp(-1.0, 1.0) * max_abs)
+        .round()
+        .clamp(range.min as f64, range.max as f64) as i32
 }
 
 fn parse_macro_target(
@@ -2896,6 +3000,44 @@ mappings:
     }
 
     #[test]
+    fn parses_stick_deflection_macro_events() {
+        let profile = parse_profile_bytes(
+            br#"
+id: stick-macro
+mappings:
+  - from: btn:start
+    action: macro
+    macro:
+      mode: press
+      events:
+        - stick: left
+          x: 0.5
+          y: -0.25
+        - pause_ms: 25
+        - stick: right
+          x: -1.0
+        - stick: right
+          x: 0.0
+"#,
+            Path::new("stick-macro.yaml"),
+        )
+        .unwrap();
+
+        let macro_settings = profile.mappings[0].macro_settings.as_ref().unwrap();
+        assert_eq!(macro_settings.events.len(), 5);
+        assert_eq!(macro_settings.events[0].kind, MacroEventKind::Axis);
+        assert_eq!(macro_settings.events[0].code_name, "abs:x");
+        assert_eq!(macro_settings.events[0].value, 16384);
+        assert_eq!(macro_settings.events[1].code_name, "abs:y");
+        assert_eq!(macro_settings.events[1].value, -8192);
+        assert_eq!(macro_settings.events[3].code_name, "abs:rx");
+        assert_eq!(macro_settings.events[3].value, -32768);
+        assert_eq!(macro_settings.events[4].code_name, "abs:rx");
+        assert_eq!(macro_settings.events[4].value, 0);
+        assert_eq!(macro_settings.duration_ms, 25);
+    }
+
+    #[test]
     fn parses_macro_cancel_events() {
         let profile = parse_profile_bytes(
             br#"
@@ -3071,6 +3213,26 @@ mappings:
         assert!(
             bad_axis_error.contains("requires value"),
             "{bad_axis_error}"
+        );
+
+        let bad_stick_value = parse_profile_bytes(
+            br#"
+id: bad-stick-macro
+mappings:
+  - from: btn:start
+    action: macro
+    macro:
+      events:
+        - stick: left
+          x: 1.5
+"#,
+            Path::new("bad-stick-macro.yaml"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            bad_stick_value.contains("must stay within -1.0..1.0"),
+            "{bad_stick_value}"
         );
 
         let press_release_error = parse_profile_bytes(
