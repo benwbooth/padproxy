@@ -895,9 +895,9 @@ fn parse_mappings(mappings: Option<Vec<RawMapping>>, context: &str) -> Result<Ve
                         to.name()
                     ));
                 }
-                if to.kind == EventKind::Relative {
+                if to.kind == EventKind::Relative && from.kind != EventKind::Absolute {
                     return Err(anyhow!(
-                        "relative target event {} in {context} requires a macro event with value",
+                        "relative target event {} in {context} requires an absolute-axis source or a macro event with value",
                         to.name()
                     ));
                 }
@@ -2067,6 +2067,8 @@ mappings:
     to: key:space
   - from: btn:east
     to: mouse:left
+  - from: abs:x
+    to: rel:x
   - from: btn:start
     action: macro
     macro:
@@ -2082,7 +2084,9 @@ mappings:
 
         assert_eq!(profile.mappings[0].to_name, "key:space");
         assert_eq!(profile.mappings[1].to_name, "mouse:left");
-        let macro_settings = profile.mappings[2].macro_settings.as_ref().unwrap();
+        assert_eq!(profile.mappings[2].from_name, "abs:x");
+        assert_eq!(profile.mappings[2].to_name, "rel:x");
+        let macro_settings = profile.mappings[3].macro_settings.as_ref().unwrap();
         assert_eq!(macro_settings.events[0].code_name, "key:enter");
         assert_eq!(macro_settings.events[1].code_name, "mouse:right");
         assert_eq!(macro_settings.events[2].kind, MacroEventKind::Relative);
@@ -2104,7 +2108,7 @@ mappings:
         .unwrap_err()
         .to_string();
 
-        assert!(error.contains("requires a macro event"), "{error}");
+        assert!(error.contains("absolute-axis source"), "{error}");
     }
 
     #[test]

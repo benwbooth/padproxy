@@ -88,7 +88,8 @@ Xbox/PlayStation/generic controller templates, and `Listen` can fill the active
 source or target control from the selected physical controller. The layer
 selector edits the main layer plus up to ten shift layers, each activated by a
 hold or toggle control. Individual mapping rows can map, disable, or turbo a
-button output, keyboard key, or mouse button, and button mappings can fire on
+button output, keyboard key, or mouse button, and analog axes can map directly
+to relative mouse axes for stick-to-mouse output. Button mappings can fire on
 press, release, long press, double press, or triple press. Non-press activators
 fire discrete map taps, press macros, or commands; YAML can customize
 long/multi-press timing with `delay_ms`, `timeout_ms`, or `interval_ms`. The
@@ -157,6 +158,10 @@ mappings:
     to: key:space
   - from: btn:tl2
     to: mouse:left
+  - from: abs:rx
+    to: rel:x
+  - from: abs:ry
+    to: rel:y
   - from: btn:start
     action: macro
     macro:

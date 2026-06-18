@@ -17,6 +17,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
+const RELATIVE_AXIS_INTERVAL: Duration = Duration::from_millis(8);
+const RELATIVE_AXIS_MAX_STEP: f64 = 20.0;
+const DEFAULT_RELATIVE_AXIS_DEADZONE: f64 = 0.12;
+
 pub struct LaunchOptions {
     pub profile: Profile,
     pub source_device_path: String,
@@ -51,6 +55,7 @@ pub struct RemapRuntime {
     pending_activators: HashMap<EventCode, PendingActivator>,
     analog_tuning: HashMap<EventCode, AnalogTuning>,
     active_analog_zones: HashSet<(EventCode, usize)>,
+    relative_axis_states: HashMap<EventCode, RelativeAxisState>,
     virtual_nodes: Vec<String>,
 }
 
@@ -81,6 +86,13 @@ struct ScheduledMacroEvent {
     due: Instant,
     event: EventCode,
     value: i32,
+}
+
+struct RelativeAxisState {
+    target: EventCode,
+    unit_value: f64,
+    remainder: f64,
+    next_emit: Instant,
 }
 
 struct PendingActivator {
@@ -199,6 +211,7 @@ impl RemapRuntime {
             pending_activators: HashMap::new(),
             analog_tuning,
             active_analog_zones: HashSet::new(),
+            relative_axis_states: HashMap::new(),
             virtual_nodes,
         })
     }
@@ -241,6 +254,7 @@ impl RemapRuntime {
         self.push_due_activator_events(&mut output);
         self.push_due_macro_events(&mut output);
         self.push_due_turbo_events(&mut output);
+        self.push_due_relative_axis_events(&mut output);
 
         if !output.is_empty() {
             self.virtual_pad.emit(&output)?;
@@ -530,10 +544,47 @@ impl RemapRuntime {
             || (!self.profile.passthrough && !resolved.mapped)
             || !virtual_output_supports(resolved.target)
         {
+            self.relative_axis_states.remove(&source_event);
+            return;
+        }
+        if resolved.target.kind == EventKind::Relative {
+            self.update_relative_axis_state(source_event, resolved.target, value);
             return;
         }
         let value = self.apply_analog_tuning(source_event, resolved.target, value);
         push_input_event(output, resolved.target, value);
+    }
+
+    fn update_relative_axis_state(
+        &mut self,
+        source_event: EventCode,
+        target_event: EventCode,
+        value: i32,
+    ) {
+        let unit_value =
+            relative_axis_unit_value(source_event, value, self.analog_tuning.get(&source_event));
+        if unit_value.abs() <= f64::EPSILON {
+            self.relative_axis_states.remove(&source_event);
+            return;
+        }
+
+        let now = Instant::now();
+        self.relative_axis_states
+            .entry(source_event)
+            .and_modify(|state| {
+                if state.target != target_event {
+                    state.remainder = 0.0;
+                    state.next_emit = now;
+                }
+                state.target = target_event;
+                state.unit_value = unit_value;
+            })
+            .or_insert(RelativeAxisState {
+                target: target_event,
+                unit_value,
+                remainder: 0.0,
+                next_emit: now,
+            });
     }
 
     fn push_analog_zone_events(
@@ -734,6 +785,21 @@ impl RemapRuntime {
         }
     }
 
+    fn push_due_relative_axis_events(&mut self, output: &mut Vec<InputEvent>) {
+        let now = Instant::now();
+        for state in self.relative_axis_states.values_mut() {
+            if now < state.next_emit {
+                continue;
+            }
+
+            let value = relative_axis_step(state.unit_value, &mut state.remainder);
+            state.next_emit = now + RELATIVE_AXIS_INTERVAL;
+            if value != 0 {
+                push_input_event(output, state.target, value);
+            }
+        }
+    }
+
     fn resolved_mapping(&self, source_event: EventCode) -> ResolvedMapping {
         let layer = &self.layers[self.active_layer_index()];
         layer
@@ -787,6 +853,54 @@ impl RemapRuntime {
 
 fn push_input_event(output: &mut Vec<InputEvent>, event: EventCode, value: i32) {
     output.push(InputEvent::new(event.event_type().0, event.code, value));
+}
+
+fn relative_axis_unit_value(
+    source_event: EventCode,
+    value: i32,
+    tuning: Option<&AnalogTuning>,
+) -> f64 {
+    let value = tuning.map(|tuning| tuning.apply(value)).unwrap_or(value);
+    let Some(unit) = normalized_absolute_axis_value(source_event, value) else {
+        return 0.0;
+    };
+    let deadzone = if tuning.is_some() {
+        0.0
+    } else {
+        DEFAULT_RELATIVE_AXIS_DEADZONE
+    };
+    let magnitude = unit.abs();
+    if magnitude <= deadzone {
+        0.0
+    } else {
+        unit.signum() * ((magnitude - deadzone) / (1.0 - deadzone)).clamp(0.0, 1.0)
+    }
+}
+
+fn normalized_absolute_axis_value(event: EventCode, value: i32) -> Option<f64> {
+    if event.kind != EventKind::Absolute {
+        return None;
+    }
+
+    match event.name().as_str() {
+        "abs:z" | "abs:rz" => Some((value as f64 / 255.0).clamp(0.0, 1.0)),
+        "abs:hat0x" | "abs:hat0y" => Some((value as f64).clamp(-1.0, 1.0)),
+        _ => {
+            let max_abs = 32768.0;
+            Some((value as f64 / max_abs).clamp(-1.0, 1.0))
+        }
+    }
+}
+
+fn relative_axis_step(unit_value: f64, remainder: &mut f64) -> i32 {
+    let raw = unit_value.clamp(-1.0, 1.0) * RELATIVE_AXIS_MAX_STEP + *remainder;
+    let step = if raw.is_sign_negative() {
+        raw.ceil()
+    } else {
+        raw.floor()
+    };
+    *remainder = raw - step;
+    step as i32
 }
 
 fn create_virtual_xbox_pad(profile: &Profile) -> Result<VirtualDevice> {
@@ -881,7 +995,7 @@ fn profile_output_events(profile: &Profile) -> HashSet<EventCode> {
 
 #[cfg(test)]
 mod tests {
-    use super::profile_output_events;
+    use super::{profile_output_events, relative_axis_step, relative_axis_unit_value};
     use crate::event_code::parse_event_code;
     use crate::profiles::parse_profile_bytes;
     use std::path::Path;
@@ -905,5 +1019,45 @@ mappings: []
 
         let events = profile_output_events(&profile);
         assert!(events.contains(&parse_event_code("key:space").unwrap()));
+    }
+
+    #[test]
+    fn direct_relative_axis_targets_are_virtual_output_capabilities() {
+        let profile = parse_profile_bytes(
+            br#"
+id: mouse-output
+mappings:
+  - from: abs:x
+    to: rel:x
+  - from: abs:y
+    to: rel:y
+"#,
+            Path::new("mouse-output.yaml"),
+        )
+        .unwrap();
+
+        let events = profile_output_events(&profile);
+        assert!(events.contains(&parse_event_code("rel:x").unwrap()));
+        assert!(events.contains(&parse_event_code("rel:y").unwrap()));
+    }
+
+    #[test]
+    fn analog_values_become_relative_mouse_steps() {
+        let source = parse_event_code("abs:x").unwrap();
+        assert_eq!(relative_axis_unit_value(source, 0, None), 0.0);
+        assert_eq!(relative_axis_unit_value(source, 3000, None), 0.0);
+
+        let right = relative_axis_unit_value(source, 32767, None);
+        assert!(right > 0.99, "{right}");
+        let left = relative_axis_unit_value(source, -32768, None);
+        assert!(left < -0.99, "{left}");
+
+        let mut remainder = 0.0;
+        assert_eq!(relative_axis_step(1.0, &mut remainder), 20);
+        assert_eq!(relative_axis_step(-1.0, &mut remainder), -20);
+
+        let mut fractional_remainder = 0.0;
+        assert_eq!(relative_axis_step(0.03, &mut fractional_remainder), 0);
+        assert_eq!(relative_axis_step(0.03, &mut fractional_remainder), 1);
     }
 }

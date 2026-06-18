@@ -45,7 +45,8 @@ Source pages consulted:
 - Controller to keyboard mappings. Basic controller-button to keyboard-key
   mappings done.
 - Controller to mouse mappings. Basic controller-button to mouse-button
-  mappings done; relative mouse-axis output is available in YAML macros.
+  mappings done; relative mouse-axis output is available in YAML macros and
+  direct analog-axis mappings.
 - Keyboard to controller mappings.
 - Mouse to controller mappings.
 - Native/hardware mappings that do not create an emulated device.
@@ -111,7 +112,8 @@ Source pages consulted:
 - Digital 8-way stick mode.
 - Diagonal stick mappings.
 - Mouse-to-stick conversion.
-- Stick-to-mouse conversion.
+- Stick-to-mouse conversion. Basic direct analog-axis to relative mouse-axis
+  mappings done.
 - Per-axis sensitivity. Basic per-axis sensitivity done.
 
 ## Output Devices

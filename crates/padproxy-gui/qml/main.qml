@@ -142,6 +142,12 @@ ApplicationWindow {
         "abs:hat0x",
         "abs:hat0y"
     ]
+    property var relativeEventCodes: [
+        "rel:x",
+        "rel:y",
+        "rel:wheel",
+        "rel:hwheel"
+    ]
     property var buttonEventCodes: [
         "btn:south",
         "btn:east",
@@ -441,6 +447,22 @@ ApplicationWindow {
 
     function normalizedZonePercent(value, fallback) {
         return root.normalizedPercent(value, fallback, 0, 100)
+    }
+
+    function isAnalogAxisCode(code) {
+        return root.analogAxisCodes.indexOf(code) >= 0
+    }
+
+    function isRelativeCode(code) {
+        return root.relativeEventCodes.indexOf(code) >= 0
+    }
+
+    function mappingTargetCodes(action, fromCode) {
+        if (action === "macro")
+            return root.keyEventCodes
+        if (root.isAnalogAxisCode(fromCode))
+            return root.eventCodes.concat(root.relativeEventCodes)
+        return root.eventCodes
     }
 
     function commandActionIndex(command) {
@@ -886,6 +908,10 @@ ApplicationWindow {
         case "mouse:middle": return "Mouse Middle"
         case "mouse:back": return "Mouse Back"
         case "mouse:forward": return "Mouse Forward"
+        case "rel:x": return "Mouse X"
+        case "rel:y": return "Mouse Y"
+        case "rel:wheel": return "Mouse Wheel"
+        case "rel:hwheel": return "Mouse Horizontal Wheel"
         default: return code
         }
     }
@@ -927,8 +953,13 @@ ApplicationWindow {
         root.ensureMappingSelection(code)
         const propertyName = root.selectedMappingSide === "to" ? "toCode" : "fromCode"
         mappingsModel.setProperty(root.selectedMappingIndex, propertyName, code)
-        if (propertyName === "fromCode" && root.keyEventCodes.indexOf(code) < 0)
-            mappingsModel.setProperty(root.selectedMappingIndex, "activatorKind", "press")
+        if (propertyName === "fromCode") {
+            if (root.keyEventCodes.indexOf(code) < 0)
+                mappingsModel.setProperty(root.selectedMappingIndex, "activatorKind", "press")
+            const row = mappingsModel.get(root.selectedMappingIndex)
+            if (!root.isAnalogAxisCode(code) && root.isRelativeCode(row.toCode))
+                mappingsModel.setProperty(root.selectedMappingIndex, "toCode", "btn:south")
+        }
     }
 
     function startHook() {
@@ -2059,6 +2090,8 @@ ApplicationWindow {
                                                     mappingsModel.setProperty(index, "fromCode", currentText)
                                                     if (root.keyEventCodes.indexOf(currentText) < 0)
                                                         mappingsModel.setProperty(index, "activatorKind", "press")
+                                                    if (!root.isAnalogAxisCode(currentText) && root.isRelativeCode(toCode))
+                                                        mappingsModel.setProperty(index, "toCode", "btn:south")
                                                 }
                                                 ToolTip.visible: hovered
                                                 ToolTip.text: root.eventLabel(currentText)
@@ -2127,7 +2160,7 @@ ApplicationWindow {
                                             ComboBox {
                                                 readonly property var targetCodes: action === "macro"
                                                     ? root.keyEventCodes
-                                                    : root.eventCodes
+                                                    : root.mappingTargetCodes(action, fromCode)
                                                 model: targetCodes
                                                 currentIndex: Math.max(0, targetCodes.indexOf(toCode))
                                                 Layout.fillWidth: true
