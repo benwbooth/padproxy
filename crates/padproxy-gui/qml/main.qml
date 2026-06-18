@@ -2,6 +2,7 @@ import QtCore
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Controls.Material
+import QtQuick.Dialogs
 import QtQuick.Layouts
 import com.benwbooth.padproxy
 
@@ -452,7 +453,40 @@ ApplicationWindow {
             ]
         }
     ]
-    property var controllerTemplateNames: controllerTemplates.map(function(template) { return template.name })
+    // A custom diagram discovered from a real controller (via `discover-cam`),
+    // appended to the built-in templates when loaded.
+    property var customTemplate: null
+    readonly property var effectiveTemplates: customTemplate
+        ? controllerTemplates.concat([customTemplate])
+        : controllerTemplates
+    property var controllerTemplateNames: effectiveTemplates.map(function(template) { return template.name })
+
+    // Build a diagram template from a discovered layout JSON file.
+    function loadCustomLayout(path) {
+        const text = backend.load_controller_layout(path)
+        if (!text || text.length === 0)
+            return false
+        let parsed
+        try {
+            parsed = JSON.parse(text)
+        } catch (e) {
+            return false
+        }
+        if (!parsed || !parsed.controls || parsed.controls.length === 0)
+            return false
+        const controls = parsed.controls.map(function(control) {
+            return {
+                code: control.code,
+                label: root.eventLabel(control.code),
+                x: control.x,
+                y: control.y,
+                w: 0.11,
+                h: 0.08
+            }
+        })
+        root.customTemplate = { name: "My controller (discovered)", image: "", controls: controls }
+        return true
+    }
 
     onProfilesModelChanged: Qt.callLater(function() {
         if (root.profilesModel.length > 0 && backend.profile_yaml.length === 0)
@@ -1437,9 +1471,10 @@ ApplicationWindow {
     }
 
     function currentControllerTemplate(index) {
-        if (index < 0 || index >= root.controllerTemplates.length)
-            return root.controllerTemplates[0]
-        return root.controllerTemplates[index]
+        const templates = root.effectiveTemplates
+        if (index < 0 || index >= templates.length)
+            return templates[0]
+        return templates[index]
     }
 
     function selectedMapping() {
@@ -1903,6 +1938,22 @@ ApplicationWindow {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    // ---- Load a discovered controller layout ----------------------------
+    FileDialog {
+        id: layoutFileDialog
+        title: "Load discovered controller layout"
+        nameFilters: ["Layout JSON (*.json)", "All files (*)"]
+        onAccepted: {
+            const path = selectedFile.toString().replace(/^file:\/\//, "")
+            if (root.loadCustomLayout(path)) {
+                // Select the newly added custom diagram.
+                controllerTemplateBox.currentIndex = root.effectiveTemplates.length - 1
+            } else {
+                backend.status = "Could not load that layout — is it a discover-cam JSON file?"
             }
         }
     }
@@ -3045,6 +3096,14 @@ ApplicationWindow {
                                             Layout.preferredWidth: 180
                                             ToolTip.visible: hovered
                                             ToolTip.text: "Pick the diagram that matches your controller's button layout."
+                                        }
+
+                                        Button {
+                                            text: "Load discovered…"
+                                            onClicked: layoutFileDialog.open()
+                                            ToolTip.visible: hovered
+                                            ToolTip.text: "Load a layout captured with 'padproxyctl discover-cam' to get a "
+                                                + "diagram matching your real controller, with buttons where you pressed them."
                                         }
 
                                         Item {

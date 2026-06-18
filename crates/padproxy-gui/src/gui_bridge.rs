@@ -49,6 +49,9 @@ pub mod qobject {
 
         #[qinvokable]
         fn poll_remap(self: Pin<&mut Self>);
+
+        #[qinvokable]
+        fn load_controller_layout(self: Pin<&mut Self>, path: QString) -> QString;
     }
 }
 
@@ -310,6 +313,19 @@ mappings:\n\
 
         if should_finish {
             finish_remap_session(this.as_mut());
+        }
+    }
+
+    /// Read a discovered controller-layout JSON file (from `discover-cam`) and
+    /// return its contents, or an empty string on error.
+    pub fn load_controller_layout(self: Pin<&mut Self>, path: QString) -> QString {
+        let path = path.to_string();
+        match std::fs::read_to_string(&path) {
+            Ok(content) => QString::from(&content),
+            Err(error) => {
+                eprintln!("Failed to load controller layout {path}: {error}");
+                QString::from("")
+            }
         }
     }
 }
