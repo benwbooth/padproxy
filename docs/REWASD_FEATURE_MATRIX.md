@@ -107,8 +107,8 @@ Source pages consulted:
 - Custom response curves. Basic YAML/UI custom exponent curve done.
 - Axis inversion. Basic per-axis inversion done.
 - Axis range tuning. Basic per-axis output min/max done.
-- Stick rotation.
-- Swap sticks.
+- Stick rotation. Basic left/right stick rotation by degrees done.
+- Swap sticks. Basic left/right virtual stick swap done.
 - Digital 8-way stick mode. Basic stick-pair to virtual D-pad output done.
 - Diagonal stick mappings. Basic diagonal output done through digital stick
   X/Y output.
@@ -196,5 +196,5 @@ Source pages consulted:
 4. Add remap ON/OFF/apply lifecycle from the GUI. Done.
 5. Add virtual output type selection and hide/grab policy controls. Done for implemented outputs; planned outputs are visible but disabled until their virtual-device backends exist.
 6. Add layers, then activators, then macros. Basic main/shift layers are done with hold/toggle activation, disable mappings, held-button turbo, press/release/long/double/triple controller activators, press-triggered controller/keyboard/mouse-button macros, relative mouse macro events, and hold-until-release controller macros; richer activators and macros remain.
-7. Add analog tuning. Basic per-axis deadzone, sensitivity, response curves, custom curve exponent, held-output zones, digital 8-way stick mode, inversion, and output range are done.
+7. Add analog tuning. Basic per-axis deadzone, sensitivity, response curves, custom curve exponent, held-output zones, stick rotation, stick swap, digital 8-way stick mode, inversion, and output range are done.
 8. Add process autodetect and Lunchbox integration.

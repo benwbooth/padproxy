@@ -3,7 +3,7 @@ use crate::outputs::{output_device, supported_output_ids};
 use crate::profiles::{
     ActivatorKind, ActivatorSettings, AnalogTuning, CommandAction, CommandSettings,
     DigitalStickMapping, LayerActivation, LayerActivationMode, MacroEvent, MacroEventKind,
-    MacroMode, MacroSettings, Mapping, MappingAction, Profile,
+    MacroMode, MacroSettings, Mapping, MappingAction, Profile, StickTransformMapping,
 };
 use anyhow::{anyhow, Context, Result};
 use evdev::uinput::VirtualDevice;
@@ -55,6 +55,8 @@ pub struct RemapRuntime {
     pending_activators: HashMap<EventCode, PendingActivator>,
     analog_tuning: HashMap<EventCode, AnalogTuning>,
     active_analog_zones: HashSet<(EventCode, usize)>,
+    stick_transform_sources: HashMap<EventCode, Vec<usize>>,
+    stick_transform_states: Vec<StickTransformState>,
     digital_stick_sources: HashMap<EventCode, Vec<usize>>,
     digital_stick_states: Vec<DigitalStickState>,
     relative_axis_states: HashMap<EventCode, RelativeAxisState>,
@@ -90,6 +92,14 @@ struct ScheduledMacroEvent {
     value: i32,
 }
 
+struct StickTransformState {
+    mapping: StickTransformMapping,
+    x_value: i32,
+    y_value: i32,
+    output_x_value: i32,
+    output_y_value: i32,
+}
+
 struct DigitalStickState {
     mapping: DigitalStickMapping,
     x_value: i32,
@@ -110,6 +120,18 @@ struct PendingActivator {
     count: u8,
     required_count: u8,
     due: Option<Instant>,
+}
+
+impl StickTransformState {
+    fn new(mapping: StickTransformMapping) -> Self {
+        Self {
+            mapping,
+            x_value: 0,
+            y_value: 0,
+            output_x_value: 0,
+            output_y_value: 0,
+        }
+    }
 }
 
 impl DigitalStickState {
@@ -213,6 +235,14 @@ impl RemapRuntime {
             })
             .collect();
         let analog_tuning = options.profile.analog.tuning_table();
+        let stick_transform_sources = options.profile.analog.stick_transform_sources();
+        let stick_transform_states = options
+            .profile
+            .analog
+            .stick_transforms()
+            .into_iter()
+            .map(StickTransformState::new)
+            .collect();
         let digital_stick_sources = options.profile.analog.digital_stick_sources();
         let digital_stick_states = options
             .profile
@@ -242,6 +272,8 @@ impl RemapRuntime {
             pending_activators: HashMap::new(),
             analog_tuning,
             active_analog_zones: HashSet::new(),
+            stick_transform_sources,
+            stick_transform_states,
             digital_stick_sources,
             digital_stick_states,
             relative_axis_states: HashMap::new(),
@@ -574,6 +606,13 @@ impl RemapRuntime {
         let resolved = self.resolved_mapping(source_event);
         self.push_digital_stick_events(source_event, value, output);
         self.push_analog_zone_events(source_event, resolved.target, value, output);
+        let transformed = resolved.action == MappingAction::Map
+            && resolved.target.kind == EventKind::Absolute
+            && self.push_stick_transform_events(source_event, value, output);
+        if transformed {
+            self.relative_axis_states.remove(&source_event);
+            return;
+        }
         if resolved.action != MappingAction::Map
             || (!self.profile.passthrough && !resolved.mapped)
             || !virtual_output_supports(resolved.target)
@@ -587,6 +626,55 @@ impl RemapRuntime {
         }
         let value = self.apply_analog_tuning(source_event, resolved.target, value);
         push_input_event(output, resolved.target, value);
+    }
+
+    fn push_stick_transform_events(
+        &mut self,
+        source_event: EventCode,
+        value: i32,
+        output: &mut Vec<InputEvent>,
+    ) -> bool {
+        let Some(indexes) = self.stick_transform_sources.get(&source_event).cloned() else {
+            return false;
+        };
+
+        for index in indexes {
+            let Some(state) = self.stick_transform_states.get_mut(index) else {
+                continue;
+            };
+            if source_event == state.mapping.source_x {
+                state.x_value = value;
+            }
+            if source_event == state.mapping.source_y {
+                state.y_value = value;
+            }
+
+            let x_unit = stick_axis_unit_value(
+                state.mapping.source_x,
+                state.x_value,
+                self.analog_tuning.get(&state.mapping.source_x),
+            );
+            let y_unit = stick_axis_unit_value(
+                state.mapping.source_y,
+                state.y_value,
+                self.analog_tuning.get(&state.mapping.source_y),
+            );
+            let (rotated_x, rotated_y) =
+                rotate_stick_units(x_unit, y_unit, state.mapping.rotation_degrees);
+            let next_x = unit_to_absolute_axis_value(state.mapping.output_x, rotated_x);
+            let next_y = unit_to_absolute_axis_value(state.mapping.output_y, rotated_y);
+
+            if next_x != state.output_x_value {
+                state.output_x_value = next_x;
+                push_input_event(output, state.mapping.output_x, next_x);
+            }
+            if next_y != state.output_y_value {
+                state.output_y_value = next_y;
+                push_input_event(output, state.mapping.output_y, next_y);
+            }
+        }
+
+        true
     }
 
     fn push_digital_stick_events(
@@ -934,6 +1022,34 @@ fn push_input_event(output: &mut Vec<InputEvent>, event: EventCode, value: i32) 
     output.push(InputEvent::new(event.event_type().0, event.code, value));
 }
 
+fn stick_axis_unit_value(
+    source_event: EventCode,
+    value: i32,
+    tuning: Option<&AnalogTuning>,
+) -> f64 {
+    let value = tuning.map(|tuning| tuning.apply(value)).unwrap_or(value);
+    normalized_absolute_axis_value(source_event, value).unwrap_or(0.0)
+}
+
+fn rotate_stick_units(x: f64, y: f64, rotation_degrees: f64) -> (f64, f64) {
+    let radians = rotation_degrees.to_radians();
+    let sin = radians.sin();
+    let cos = radians.cos();
+    (
+        (x * cos - y * sin).clamp(-1.0, 1.0),
+        (x * sin + y * cos).clamp(-1.0, 1.0),
+    )
+}
+
+fn unit_to_absolute_axis_value(event: EventCode, unit_value: f64) -> i32 {
+    let unit = unit_value.clamp(-1.0, 1.0);
+    match event.name().as_str() {
+        "abs:hat0x" | "abs:hat0y" => unit.round() as i32,
+        "abs:z" | "abs:rz" => (unit.clamp(0.0, 1.0) * 255.0).round() as i32,
+        _ => (unit * 32768.0).round().clamp(-32768.0, 32767.0) as i32,
+    }
+}
+
 fn relative_axis_unit_value(
     source_event: EventCode,
     value: i32,
@@ -1089,6 +1205,10 @@ fn profile_output_events(profile: &Profile) -> HashSet<EventCode> {
     for axis in &profile.analog.axes {
         events.extend(axis.zones.iter().map(|zone| zone.target));
     }
+    for transform in profile.analog.stick_transforms() {
+        events.insert(transform.output_x);
+        events.insert(transform.output_y);
+    }
     for stick in &profile.analog.digital_sticks {
         events.insert(stick.output_x);
         events.insert(stick.output_y);
@@ -1100,7 +1220,7 @@ fn profile_output_events(profile: &Profile) -> HashSet<EventCode> {
 mod tests {
     use super::{
         digital_axis_direction, digital_axis_unit_value, profile_output_events, relative_axis_step,
-        relative_axis_unit_value,
+        relative_axis_unit_value, rotate_stick_units, unit_to_absolute_axis_value,
     };
     use crate::event_code::parse_event_code;
     use crate::profiles::parse_profile_bytes;
@@ -1168,6 +1288,30 @@ mappings: []
     }
 
     #[test]
+    fn stick_transform_outputs_are_virtual_output_capabilities() {
+        let profile = parse_profile_bytes(
+            br#"
+id: stick-transform-output
+analog:
+  swap_sticks: true
+  sticks:
+    - x_axis: abs:x
+      y_axis: abs:y
+      rotation_degrees: 30
+mappings: []
+"#,
+            Path::new("stick-transform-output.yaml"),
+        )
+        .unwrap();
+
+        let events = profile_output_events(&profile);
+        assert!(events.contains(&parse_event_code("abs:x").unwrap()));
+        assert!(events.contains(&parse_event_code("abs:y").unwrap()));
+        assert!(events.contains(&parse_event_code("abs:rx").unwrap()));
+        assert!(events.contains(&parse_event_code("abs:ry").unwrap()));
+    }
+
+    #[test]
     fn analog_values_become_relative_mouse_steps() {
         let source = parse_event_code("abs:x").unwrap();
         assert_eq!(relative_axis_unit_value(source, 0, None), 0.0);
@@ -1194,5 +1338,25 @@ mappings: []
         assert_eq!(digital_axis_direction(0.49, 0.5), 0);
         assert_eq!(digital_axis_direction(0.50, 0.5), 1);
         assert_eq!(digital_axis_direction(-0.50, 0.5), -1);
+    }
+
+    #[test]
+    fn stick_units_rotate_and_scale_to_axes() {
+        let (x, y) = rotate_stick_units(1.0, 0.0, 90.0);
+        assert!(x.abs() < 0.000_001, "{x}");
+        assert!(y > 0.999, "{y}");
+
+        let (x, y) = rotate_stick_units(0.0, 1.0, -90.0);
+        assert!(x > 0.999, "{x}");
+        assert!(y.abs() < 0.000_001, "{y}");
+
+        assert_eq!(
+            unit_to_absolute_axis_value(parse_event_code("abs:x").unwrap(), 1.0),
+            32767
+        );
+        assert_eq!(
+            unit_to_absolute_axis_value(parse_event_code("abs:y").unwrap(), -1.0),
+            -32768
+        );
     }
 }

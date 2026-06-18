@@ -129,6 +129,8 @@ pub enum MacroEventKind {
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct AnalogSettings {
     pub axes: Vec<AnalogTuning>,
+    pub sticks: Vec<StickPairSettings>,
+    pub swap_sticks: bool,
     pub digital_sticks: Vec<DigitalStickMapping>,
 }
 
@@ -162,6 +164,24 @@ pub struct AnalogZoneMapping {
     pub max: f64,
     pub target: EventCode,
     pub target_name: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct StickPairSettings {
+    pub x_axis: EventCode,
+    pub x_axis_name: String,
+    pub y_axis: EventCode,
+    pub y_axis_name: String,
+    pub rotation_degrees: f64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct StickTransformMapping {
+    pub source_x: EventCode,
+    pub source_y: EventCode,
+    pub output_x: EventCode,
+    pub output_y: EventCode,
+    pub rotation_degrees: f64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -319,6 +339,11 @@ struct RawCommandObject {
 #[derive(Debug, Default, Deserialize)]
 struct RawAnalogSettings {
     axes: Option<Vec<RawAnalogTuning>>,
+    sticks: Option<Vec<RawStickPairSettings>>,
+    stick_rotations: Option<Vec<RawStickPairSettings>>,
+    rotation: Option<Vec<RawStickPairSettings>>,
+    swap_sticks: Option<bool>,
+    swap: Option<bool>,
     digital_sticks: Option<Vec<RawDigitalStickMapping>>,
     digital: Option<Vec<RawDigitalStickMapping>>,
 }
@@ -349,6 +374,17 @@ struct RawAnalogZoneMapping {
     min: Option<f64>,
     max: Option<f64>,
     threshold: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawStickPairSettings {
+    x_axis: Option<String>,
+    y_axis: Option<String>,
+    x: Option<String>,
+    y: Option<String>,
+    rotation_degrees: Option<f64>,
+    rotation: Option<f64>,
+    rotate: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -538,6 +574,65 @@ impl AnalogSettings {
             .iter()
             .map(|tuning| (tuning.code, tuning.clone()))
             .collect()
+    }
+
+    pub fn stick_transforms(&self) -> Vec<StickTransformMapping> {
+        let left_x = parse_event_code("abs:x").expect("built-in event code");
+        let left_y = parse_event_code("abs:y").expect("built-in event code");
+        let right_x = parse_event_code("abs:rx").expect("built-in event code");
+        let right_y = parse_event_code("abs:ry").expect("built-in event code");
+
+        if self.swap_sticks {
+            let left_rotation = self
+                .sticks
+                .iter()
+                .find(|stick| stick.x_axis == left_x && stick.y_axis == left_y)
+                .map(|stick| stick.rotation_degrees)
+                .unwrap_or(0.0);
+            let right_rotation = self
+                .sticks
+                .iter()
+                .find(|stick| stick.x_axis == right_x && stick.y_axis == right_y)
+                .map(|stick| stick.rotation_degrees)
+                .unwrap_or(0.0);
+
+            return vec![
+                StickTransformMapping {
+                    source_x: left_x,
+                    source_y: left_y,
+                    output_x: right_x,
+                    output_y: right_y,
+                    rotation_degrees: left_rotation,
+                },
+                StickTransformMapping {
+                    source_x: right_x,
+                    source_y: right_y,
+                    output_x: left_x,
+                    output_y: left_y,
+                    rotation_degrees: right_rotation,
+                },
+            ];
+        }
+
+        self.sticks
+            .iter()
+            .map(|stick| StickTransformMapping {
+                source_x: stick.x_axis,
+                source_y: stick.y_axis,
+                output_x: stick.x_axis,
+                output_y: stick.y_axis,
+                rotation_degrees: stick.rotation_degrees,
+            })
+            .collect()
+    }
+
+    pub fn stick_transform_sources(&self) -> HashMap<EventCode, Vec<usize>> {
+        let mut sources = HashMap::<EventCode, Vec<usize>>::new();
+        for (index, transform) in self.stick_transforms().iter().enumerate() {
+            sources.entry(transform.source_x).or_default().push(index);
+            sources.entry(transform.source_y).or_default().push(index);
+        }
+        sources
     }
 
     pub fn digital_stick_sources(&self) -> HashMap<EventCode, Vec<usize>> {
@@ -1524,7 +1619,9 @@ fn parse_analog_settings(raw: Option<RawAnalogSettings>) -> Result<AnalogSetting
     };
 
     let mut axes = Vec::new();
+    let raw_sticks = raw.sticks.or(raw.stick_rotations).or(raw.rotation);
     let raw_digital_sticks = raw.digital_sticks.or(raw.digital);
+    let swap_sticks = raw.swap_sticks.or(raw.swap).unwrap_or(false);
     for axis in raw.axes.unwrap_or_default() {
         let code = parse_event_code(&axis.code)
             .ok_or_else(|| anyhow!("unknown analog axis {}", axis.code))?;
@@ -1594,10 +1691,13 @@ fn parse_analog_settings(raw: Option<RawAnalogSettings>) -> Result<AnalogSetting
         });
     }
 
+    let sticks = parse_stick_pair_settings(raw_sticks)?;
     let digital_sticks = parse_digital_sticks(raw_digital_sticks)?;
 
     Ok(AnalogSettings {
         axes,
+        sticks,
+        swap_sticks,
         digital_sticks,
     })
 }
@@ -1718,6 +1818,83 @@ fn analog_zone_default_range(name: &str) -> Result<(f64, f64)> {
         "high" => Ok((0.66, 1.0)),
         "custom" => Ok((0.5, 1.0)),
         other => Err(anyhow!("unknown analog zone {other}")),
+    }
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum StickSide {
+    Left,
+    Right,
+}
+
+fn parse_stick_pair_settings(
+    raw_sticks: Option<Vec<RawStickPairSettings>>,
+) -> Result<Vec<StickPairSettings>> {
+    let mut sticks = Vec::new();
+    for (index, raw) in raw_sticks.unwrap_or_default().into_iter().enumerate() {
+        let context = format!("stick {}", index + 1);
+        let x_axis_name = raw
+            .x_axis
+            .or(raw.x)
+            .ok_or_else(|| anyhow!("{context} requires x_axis"))?;
+        let y_axis_name = raw
+            .y_axis
+            .or(raw.y)
+            .ok_or_else(|| anyhow!("{context} requires y_axis"))?;
+        let x_axis = parse_stick_horizontal_axis(&x_axis_name, &context)?;
+        let y_axis = parse_stick_vertical_axis(&y_axis_name, &context)?;
+        let side = stick_side_for_pair(x_axis, y_axis).ok_or_else(|| {
+            anyhow!("{context} must use a matching left or right stick axis pair")
+        })?;
+        if sticks.iter().any(|existing: &StickPairSettings| {
+            stick_side_for_pair(existing.x_axis, existing.y_axis) == Some(side)
+        }) {
+            return Err(anyhow!("{context} duplicates a stick rotation pair"));
+        }
+
+        let rotation_degrees = raw
+            .rotation_degrees
+            .or(raw.rotation)
+            .or(raw.rotate)
+            .unwrap_or(0.0);
+        if !(-180.0..=180.0).contains(&rotation_degrees) {
+            return Err(anyhow!(
+                "{context} rotation_degrees must be between -180 and 180"
+            ));
+        }
+
+        sticks.push(StickPairSettings {
+            x_axis,
+            x_axis_name: x_axis.name(),
+            y_axis,
+            y_axis_name: y_axis.name(),
+            rotation_degrees,
+        });
+    }
+    Ok(sticks)
+}
+
+fn parse_stick_horizontal_axis(value: &str, context: &str) -> Result<EventCode> {
+    let code = parse_event_code(value).ok_or_else(|| anyhow!("unknown {context} axis {value}"))?;
+    match code.name().as_str() {
+        "abs:x" | "abs:rx" => Ok(code),
+        _ => Err(anyhow!("{context} x_axis must be abs:x or abs:rx")),
+    }
+}
+
+fn parse_stick_vertical_axis(value: &str, context: &str) -> Result<EventCode> {
+    let code = parse_event_code(value).ok_or_else(|| anyhow!("unknown {context} axis {value}"))?;
+    match code.name().as_str() {
+        "abs:y" | "abs:ry" => Ok(code),
+        _ => Err(anyhow!("{context} y_axis must be abs:y or abs:ry")),
+    }
+}
+
+fn stick_side_for_pair(x_axis: EventCode, y_axis: EventCode) -> Option<StickSide> {
+    match (x_axis.name().as_str(), y_axis.name().as_str()) {
+        ("abs:x", "abs:y") => Some(StickSide::Left),
+        ("abs:rx", "abs:ry") => Some(StickSide::Right),
+        _ => None,
     }
 }
 
@@ -2515,6 +2692,7 @@ mappings:
             br#"
 id: analog
 analog:
+  swap_sticks: true
   axes:
     - code: abs:x
       deadzone: 0.2
@@ -2534,6 +2712,10 @@ analog:
         - name: high
           min: 0.70
           to: key:space
+  sticks:
+    - x_axis: abs:x
+      y_axis: abs:y
+      rotation_degrees: 15
   digital_sticks:
     - x_axis: abs:x
       y_axis: abs:y
@@ -2560,6 +2742,18 @@ analog:
         assert_eq!(profile.analog.axes[1].zones[1].min, 0.70);
         assert_eq!(profile.analog.axes[1].zones[1].target_name, "key:space");
         assert_eq!(profile.analog.tuning_table().len(), 2);
+        assert!(profile.analog.swap_sticks);
+        assert_eq!(profile.analog.sticks.len(), 1);
+        assert_eq!(profile.analog.sticks[0].x_axis_name, "abs:x");
+        assert_eq!(profile.analog.sticks[0].y_axis_name, "abs:y");
+        assert_eq!(profile.analog.sticks[0].rotation_degrees, 15.0);
+        let transforms = profile.analog.stick_transforms();
+        assert_eq!(transforms.len(), 2);
+        assert_eq!(transforms[0].source_x.name(), "abs:x");
+        assert_eq!(transforms[0].output_x.name(), "abs:rx");
+        assert_eq!(transforms[0].rotation_degrees, 15.0);
+        assert_eq!(transforms[1].source_x.name(), "abs:rx");
+        assert_eq!(transforms[1].output_x.name(), "abs:x");
         assert_eq!(profile.analog.digital_sticks.len(), 1);
         assert_eq!(profile.analog.digital_sticks[0].x_axis_name, "abs:x");
         assert_eq!(profile.analog.digital_sticks[0].y_axis_name, "abs:y");
@@ -2660,6 +2854,49 @@ analog:
         .unwrap_err()
         .to_string();
         assert!(error.contains("min/max"), "{error}");
+
+        let error = parse_profile_bytes(
+            br#"
+id: bad-stick-axis
+analog:
+  sticks:
+    - x_axis: abs:z
+      y_axis: abs:y
+"#,
+            Path::new("bad-stick-axis.yaml"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("x_axis"), "{error}");
+
+        let error = parse_profile_bytes(
+            br#"
+id: bad-stick-pair
+analog:
+  sticks:
+    - x_axis: abs:x
+      y_axis: abs:ry
+"#,
+            Path::new("bad-stick-pair.yaml"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("matching left or right"), "{error}");
+
+        let error = parse_profile_bytes(
+            br#"
+id: bad-stick-rotation
+analog:
+  sticks:
+    - x_axis: abs:x
+      y_axis: abs:y
+      rotation_degrees: 360
+"#,
+            Path::new("bad-stick-rotation.yaml"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("rotation_degrees"), "{error}");
 
         let error = parse_profile_bytes(
             br#"

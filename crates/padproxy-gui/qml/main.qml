@@ -150,6 +150,10 @@ ApplicationWindow {
         "abs:hat0x",
         "abs:hat0y"
     ]
+    property var stickPairOptions: [
+        { label: "Left Stick", xAxisCode: "abs:x", yAxisCode: "abs:y" },
+        { label: "Right Stick", xAxisCode: "abs:rx", yAxisCode: "abs:ry" }
+    ]
     property var relativeEventCodes: [
         "rel:x",
         "rel:y",
@@ -495,6 +499,51 @@ ApplicationWindow {
         }
     }
 
+    function stickPairIndex(xAxisCode, yAxisCode) {
+        for (let i = 0; i < root.stickPairOptions.length; i++) {
+            const pair = root.stickPairOptions[i]
+            if (pair.xAxisCode === xAxisCode && pair.yAxisCode === yAxisCode)
+                return i
+        }
+        return 0
+    }
+
+    function stickPairUsed(pairIndex, skipRow) {
+        const pair = root.stickPairOptions[pairIndex]
+        if (!pair)
+            return false
+        for (let i = 0; i < stickTransformsModel.count; i++) {
+            if (i === skipRow)
+                continue
+            const row = stickTransformsModel.get(i)
+            if (row.xAxisCode === pair.xAxisCode && row.yAxisCode === pair.yAxisCode)
+                return true
+        }
+        return false
+    }
+
+    function firstUnusedStickPairIndex() {
+        for (let i = 0; i < root.stickPairOptions.length; i++) {
+            if (!root.stickPairUsed(i, -1))
+                return i
+        }
+        return -1
+    }
+
+    function setStickTransformPair(rowIndex, pairIndex) {
+        const pair = root.stickPairOptions[pairIndex]
+        if (!pair)
+            return
+        if (root.stickPairUsed(pairIndex, rowIndex)) {
+            root.hookStatus = pair.label + " already has a rotation row."
+            return
+        }
+        stickTransformsModel.setProperty(rowIndex, "xAxisCode", pair.xAxisCode)
+        stickTransformsModel.setProperty(rowIndex, "yAxisCode", pair.yAxisCode)
+        root.ensureAnalogAxis(pair.xAxisCode)
+        root.ensureAnalogAxis(pair.yAxisCode)
+    }
+
     function isRelativeCode(code) {
         return root.relativeEventCodes.indexOf(code) >= 0
     }
@@ -533,6 +582,13 @@ ApplicationWindow {
         if (!Number.isFinite(number))
             return fallback
         return Math.max(minValue, Math.min(maxValue, Math.round(number)))
+    }
+
+    function normalizedSignedDegrees(value) {
+        const number = Number(value)
+        if (!Number.isFinite(number))
+            return 0
+        return Math.max(-180, Math.min(180, Math.round(number)))
     }
 
     function analogRangeMin(code) {
@@ -620,6 +676,22 @@ ApplicationWindow {
         })
     }
 
+    function addStickRotation() {
+        const pairIndex = root.firstUnusedStickPairIndex()
+        if (pairIndex < 0) {
+            root.hookStatus = "Left and right stick rotation rows already exist."
+            return
+        }
+        const pair = root.stickPairOptions[pairIndex]
+        stickTransformsModel.append({
+            xAxisCode: pair.xAxisCode,
+            yAxisCode: pair.yAxisCode,
+            rotationDegrees: 0
+        })
+        root.ensureAnalogAxis(pair.xAxisCode)
+        root.ensureAnalogAxis(pair.yAxisCode)
+    }
+
     function addDigitalStick() {
         digitalSticksModel.append({
             xAxisCode: "abs:x",
@@ -633,7 +705,9 @@ ApplicationWindow {
     function loadAnalogSettings(analog) {
         analogModel.clear()
         analogZonesModel.clear()
+        stickTransformsModel.clear()
         digitalSticksModel.clear()
+        swapSticksCheck.checked = analog && analog.swap_sticks === true
         const axes = analog && analog.axes ? analog.axes : []
         for (let i = 0; i < axes.length; i++) {
             const axisCode = axes[i].code_name || axes[i].code || "abs:x"
@@ -662,6 +736,21 @@ ApplicationWindow {
                 })
             }
         }
+        const sticks = analog && analog.sticks ? analog.sticks : []
+        for (let i = 0; i < sticks.length; i++) {
+            const pairIndex = root.stickPairIndex(
+                sticks[i].x_axis_name || sticks[i].x_axis || "abs:x",
+                sticks[i].y_axis_name || sticks[i].y_axis || "abs:y"
+            )
+            const pair = root.stickPairOptions[pairIndex]
+            if (root.stickPairUsed(pairIndex, -1))
+                continue
+            stickTransformsModel.append({
+                xAxisCode: pair.xAxisCode,
+                yAxisCode: pair.yAxisCode,
+                rotationDegrees: root.normalizedSignedDegrees(sticks[i].rotation_degrees || 0)
+            })
+        }
         const digitalSticks = analog && analog.digital_sticks ? analog.digital_sticks : []
         for (let i = 0; i < digitalSticks.length; i++) {
             const xAxisCode = root.centeredAnalogAxisCode(digitalSticks[i].x_axis_name || digitalSticks[i].x_axis, "abs:x")
@@ -677,10 +766,15 @@ ApplicationWindow {
     }
 
     function analogYaml() {
-        if (analogModel.count === 0 && digitalSticksModel.count === 0)
+        if (analogModel.count === 0
+                && stickTransformsModel.count === 0
+                && digitalSticksModel.count === 0
+                && !swapSticksCheck.checked)
             return ""
 
         let text = "analog:\n"
+        if (swapSticksCheck.checked)
+            text += "  swap_sticks: true\n"
         if (analogModel.count > 0) {
             text += "  axes:\n"
             for (let i = 0; i < analogModel.count; i++) {
@@ -714,6 +808,17 @@ ApplicationWindow {
                     text += "      zones:\n"
                     text += zoneText
                 }
+            }
+        }
+        if (stickTransformsModel.count > 0) {
+            text += "  sticks:\n"
+            for (let i = 0; i < stickTransformsModel.count; i++) {
+                const row = stickTransformsModel.get(i)
+                const pairIndex = root.stickPairIndex(row.xAxisCode, row.yAxisCode)
+                const pair = root.stickPairOptions[pairIndex]
+                text += "    - x_axis: " + pair.xAxisCode + "\n"
+                text += "      y_axis: " + pair.yAxisCode + "\n"
+                text += "      rotation_degrees: " + root.normalizedSignedDegrees(row.rotationDegrees) + "\n"
             }
         }
         if (digitalSticksModel.count > 0) {
@@ -1111,6 +1216,8 @@ ApplicationWindow {
         ])
         analogModel.clear()
         analogZonesModel.clear()
+        stickTransformsModel.clear()
+        swapSticksCheck.checked = false
         digitalSticksModel.clear()
         backend.new_profile()
     }
@@ -1285,6 +1392,10 @@ ApplicationWindow {
 
     ListModel {
         id: analogZonesModel
+    }
+
+    ListModel {
+        id: stickTransformsModel
     }
 
     ListModel {
@@ -1825,6 +1936,91 @@ ApplicationWindow {
                                                         Layout.fillWidth: true
                                                         onValueModified: analogModel.setProperty(index, "outputMax", value)
                                                     }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            Frame {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: Math.max(150, stickTransformsModel.count * 54 + 92)
+
+                                ColumnLayout {
+                                    anchors.fill: parent
+                                    spacing: 8
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+
+                                        CheckBox {
+                                            id: swapSticksCheck
+                                            text: "Swap left/right sticks"
+                                            Layout.preferredWidth: 210
+                                        }
+
+                                        Item {
+                                            Layout.fillWidth: true
+                                        }
+
+                                        Button {
+                                            text: "Add Rotation"
+                                            onClicked: root.addStickRotation()
+                                        }
+                                    }
+
+                                    Label {
+                                        text: "Stick Rotation"
+                                        font.bold: true
+                                    }
+
+                                    ListView {
+                                        id: stickTransformsList
+                                        Layout.fillWidth: true
+                                        Layout.fillHeight: true
+                                        clip: true
+                                        model: stickTransformsModel
+
+                                        delegate: Rectangle {
+                                            width: ListView.view.width
+                                            height: 48
+                                            color: index % 2 === 0 ? "#1d232b" : "transparent"
+                                            radius: 4
+
+                                            RowLayout {
+                                                anchors.fill: parent
+                                                anchors.margins: 4
+                                                spacing: 8
+
+                                                ComboBox {
+                                                    model: root.stickPairOptions
+                                                    textRole: "label"
+                                                    currentIndex: root.stickPairIndex(xAxisCode, yAxisCode)
+                                                    Layout.fillWidth: true
+                                                    onActivated: function(pairIndex) {
+                                                        root.setStickTransformPair(index, pairIndex)
+                                                    }
+                                                }
+
+                                                Label {
+                                                    text: "Degrees"
+                                                    Layout.preferredWidth: 64
+                                                    horizontalAlignment: Text.AlignRight
+                                                }
+
+                                                SpinBox {
+                                                    from: -180
+                                                    to: 180
+                                                    editable: true
+                                                    value: root.normalizedSignedDegrees(rotationDegrees)
+                                                    Layout.preferredWidth: 96
+                                                    onValueModified: stickTransformsModel.setProperty(index, "rotationDegrees", value)
+                                                }
+
+                                                Button {
+                                                    text: "Remove"
+                                                    onClicked: stickTransformsModel.remove(index)
                                                 }
                                             }
                                         }
