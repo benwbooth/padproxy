@@ -1,3 +1,4 @@
+import QtCore
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Controls.Material
@@ -150,12 +151,21 @@ ApplicationWindow {
     ]
     property int tourIndex: 0
 
+    Settings {
+        id: appSettings
+        category: "padproxy"
+        property bool tourSeen: false
+    }
+
     Component.onCompleted: Qt.callLater(function() {
         root.show()
         root.raise()
         root.requestActivate()
-        // Greet first-time users with the guided walkthrough.
-        tour.start()
+        // Greet first-time users once with the guided walkthrough.
+        if (!appSettings.tourSeen) {
+            tour.start()
+            appSettings.tourSeen = true
+        }
     })
 
     PadProxyController {
@@ -2067,12 +2077,16 @@ ApplicationWindow {
                     Button {
                         text: "New"
                         onClicked: root.newStructuredProfile()
+                        ToolTip.visible: hovered
+                        ToolTip.text: "Start a brand-new, empty profile to map controls into."
                     }
 
                     Button {
                         text: "Edit"
                         enabled: root.selectedProfile !== null
                         onClicked: backend.edit_profile(root.selectedProfile.source_path)
+                        ToolTip.visible: hovered
+                        ToolTip.text: "Open the selected profile's raw YAML for advanced editing."
                     }
                 }
 
@@ -2133,9 +2147,15 @@ ApplicationWindow {
 
                     Button {
                         text: backend.remap_active ? "Remap Off" : "Apply"
+                        highlighted: !backend.remap_active
                         enabled: backend.remap_active
                             || (root.selectedDevice() !== null && root.currentOutputSupported())
                         onClicked: backend.remap_active ? root.stopRemap() : root.startRemap()
+                        ToolTip.visible: hovered
+                        ToolTip.text: backend.remap_active
+                            ? "Stop remapping and release the controller."
+                            : "Start remapping the selected controller live with this profile. "
+                              + "Pick a controller on the left first."
                     }
 
                     Button {
@@ -2144,6 +2164,8 @@ ApplicationWindow {
                             ? profileIdField.text.trim().length > 0
                             : profileEditor.text.length > 0
                         onClicked: root.saveCurrentEditor()
+                        ToolTip.visible: hovered
+                        ToolTip.text: "Write this profile to disk so you can reuse it later."
                     }
                 }
 
@@ -2168,10 +2190,14 @@ ApplicationWindow {
 
                     TabButton {
                         text: "Mappings"
+                        ToolTip.visible: hovered
+                        ToolTip.text: "The visual editor: set up mappings, layers, and analog tuning."
                     }
 
                     TabButton {
                         text: "YAML"
+                        ToolTip.visible: hovered
+                        ToolTip.text: "The raw profile text. Advanced — most users won't need this."
                     }
                 }
 
@@ -2215,6 +2241,9 @@ ApplicationWindow {
                                 TextField {
                                     id: matchNameField
                                     Layout.fillWidth: true
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: "Optional controller name this profile is meant for "
+                                        + "(use * for any). Helps auto-pick the right profile."
                                 }
 
                                 Label { text: "Output" }
@@ -2224,6 +2253,9 @@ ApplicationWindow {
                                     textRole: "label"
                                     valueRole: "id"
                                     Layout.fillWidth: true
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: "Which virtual controller games will see (Xbox 360 works for "
+                                        + "most PC games). 'planned' types aren't selectable yet."
 
                                     delegate: ItemDelegate {
                                         width: outputTypeBox.width
@@ -2239,6 +2271,9 @@ ApplicationWindow {
                                     model: root.sourceVisibilityOptions
                                     textRole: "label"
                                     Layout.fillWidth: true
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: "Whether to hide the physical controller so games only see the "
+                                        + "virtual one (prevents double input)."
                                 }
 
                                 Label { text: "Unmapped" }
@@ -2247,6 +2282,9 @@ ApplicationWindow {
                                     model: root.unmappedControlOptions
                                     textRole: "label"
                                     Layout.fillWidth: true
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: "Whether buttons you didn't map still pass through to the "
+                                        + "virtual controller, or are ignored."
                                 }
                             }
 
@@ -2273,23 +2311,33 @@ ApplicationWindow {
                                             onActivated: function(index) {
                                                 root.selectLayerIndex(index)
                                             }
+                                            ToolTip.visible: hovered
+                                            ToolTip.text: "Switch which layer you're editing. 'Main' is always active; "
+                                                + "shift layers activate while you hold/toggle a chosen button."
                                         }
 
                                         Button {
                                             text: "Add Shift"
                                             enabled: layersModel.count < 11
                                             onClicked: root.addShiftLayer()
+                                            ToolTip.visible: hovered
+                                            ToolTip.text: "Add a shift layer — a second set of mappings active while a "
+                                                + "chosen button is held or toggled (up to 10)."
                                         }
 
                                         Button {
                                             text: "Copy"
                                             onClicked: root.copyCurrentLayer()
+                                            ToolTip.visible: hovered
+                                            ToolTip.text: "Copy this layer's mappings to paste into another layer."
                                         }
 
                                         Button {
                                             text: "Paste"
                                             enabled: root.layerClipboard !== null
                                             onClicked: root.pasteLayerIntoCurrent()
+                                            ToolTip.visible: hovered
+                                            ToolTip.text: "Paste the copied mappings into the current layer."
                                         }
 
                                         Button {
@@ -2377,6 +2425,9 @@ ApplicationWindow {
                                         Button {
                                             text: "Add Axis"
                                             onClicked: root.addAnalogAxis("")
+                                            ToolTip.visible: hovered
+                                            ToolTip.text: "Tune a stick/trigger axis: deadzone, sensitivity, "
+                                                + "response curve, inversion, and output range."
                                         }
                                     }
 
@@ -2550,6 +2601,8 @@ ApplicationWindow {
                                             id: swapSticksCheck
                                             text: "Swap left/right sticks"
                                             Layout.preferredWidth: 210
+                                            ToolTip.visible: hovered
+                                            ToolTip.text: "Exchange the left and right stick outputs."
                                         }
 
                                         Item {
@@ -2559,6 +2612,8 @@ ApplicationWindow {
                                         Button {
                                             text: "Add Rotation"
                                             onClicked: root.addStickRotation()
+                                            ToolTip.visible: hovered
+                                            ToolTip.text: "Rotate a stick's output by a number of degrees."
                                         }
                                     }
 
@@ -2643,6 +2698,9 @@ ApplicationWindow {
                                         Button {
                                             text: "Add Zone"
                                             onClicked: root.addAnalogZone("")
+                                            ToolTip.visible: hovered
+                                            ToolTip.text: "Fire a button or key when a stick/trigger passes a "
+                                                + "threshold (low / medium / high)."
                                         }
                                     }
 
@@ -2763,6 +2821,9 @@ ApplicationWindow {
                                         Button {
                                             text: "Add Stick"
                                             onClicked: root.addDigitalStick()
+                                            ToolTip.visible: hovered
+                                            ToolTip.text: "Turn an analog stick into a D-pad (8-way) so it acts "
+                                                + "like directional buttons."
                                         }
                                     }
 
@@ -2849,7 +2910,18 @@ ApplicationWindow {
                                 Button {
                                     text: "Add Mapping"
                                     onClicked: root.addMapping("btn:south", "btn:south")
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: "Add a new blank mapping row, then set its Source and Target."
                                 }
+                            }
+
+                            Label {
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                                color: root.colTextDim
+                                text: "Controller diagram — pick a mapping above (or 'Add Mapping'), choose "
+                                    + "Source or Target, then click a control below to set it. "
+                                    + "Or press 'Listen' and press a real button to capture it."
                             }
 
                             Frame {
@@ -2873,6 +2945,8 @@ ApplicationWindow {
                                             id: controllerTemplateBox
                                             model: root.controllerTemplateNames
                                             Layout.preferredWidth: 180
+                                            ToolTip.visible: hovered
+                                            ToolTip.text: "Pick the diagram that matches your controller's button layout."
                                         }
 
                                         Item {
@@ -2884,6 +2958,8 @@ ApplicationWindow {
                                             checkable: true
                                             checked: root.selectedMappingSide === "from"
                                             onClicked: root.selectedMappingSide = "from"
+                                            ToolTip.visible: hovered
+                                            ToolTip.text: "Clicking the diagram sets the physical control (the input)."
                                         }
 
                                         Button {
@@ -2891,6 +2967,8 @@ ApplicationWindow {
                                             checkable: true
                                             checked: root.selectedMappingSide === "to"
                                             onClicked: root.selectedMappingSide = "to"
+                                            ToolTip.visible: hovered
+                                            ToolTip.text: "Clicking the diagram sets what the virtual controller sends (the output)."
                                         }
 
                                         Button {
@@ -2899,6 +2977,9 @@ ApplicationWindow {
                                             checkable: true
                                             checked: root.hookListening
                                             onClicked: root.hookListening ? root.stopHook() : root.startHook()
+                                            ToolTip.visible: hovered
+                                            ToolTip.text: "Hook mode: press a button on your real controller to capture it "
+                                                + "instead of clicking the diagram."
                                         }
                                     }
 
