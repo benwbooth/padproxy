@@ -24,6 +24,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+mod bt_emulate;
 mod dbus;
 
 #[derive(Debug, Parser)]
@@ -65,6 +66,10 @@ enum Command {
         controller: String,
         #[arg(long)]
         serial: String,
+    },
+    BtEmulate {
+        #[arg(long)]
+        controller: String,
     },
     Detect,
     Watch {
@@ -241,6 +246,10 @@ fn main() -> Result<()> {
         Command::GimxOutput { controller, serial } => {
             let path = resolve_device_path(&controller)?;
             padproxy_core::gimx::run_serial_output(&path, &serial)
+        }
+        Command::BtEmulate { controller } => {
+            let path = resolve_device_path(&controller)?;
+            bt_emulate::run(&path)
         }
         Command::Detect => {
             let profiles = load_profiles(&default_profile_dirs())?;

@@ -158,9 +158,11 @@ Source pages consulted:
   the Linux uinput virtual device when profile mappings or macros target them.
 - Multiple virtual devices from one profile. Done: a profile `outputs:` list
   creates additional virtual gamepads that mirror the primary pad's output.
-- External controller emulation over Bluetooth. Not implemented: presenting as
-  a Bluetooth gamepad to another console needs a BlueZ HID-gadget/configfs stack,
-  which is separate hardware/kernel infrastructure.
+- External controller emulation over Bluetooth. Basic emulation done:
+  `padproxyctl bt-emulate` serves a Bluetooth HID-over-GATT gamepad peripheral
+  (HID service with the gamepad report map and notifying input report) via
+  BlueZ and relays the source controller. Advertising/pairing requires a
+  Bluetooth adapter that supports peripheral mode.
 - GIMX-style wired external output. Basic serial output done: `padproxyctl
   gimx-output` reads a controller and streams its state as fixed-size binary
   frames to a serial device, in the GIMX style of relaying to an external

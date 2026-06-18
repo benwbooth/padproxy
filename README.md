@@ -107,6 +107,17 @@ nix develop --command cargo run --bin padproxyctl -- gimx-output \
 baud for your adapter first); a GIMX-style adapter with matching firmware relays
 them to the target console.
 
+Emulate a controller over Bluetooth (serves a BLE HID-over-GATT gamepad that
+mirrors the source controller):
+
+```sh
+nix develop --command cargo run --bin padproxyctl -- bt-emulate \
+  --controller /dev/input/event259
+```
+
+`bt-emulate` advertises a Bluetooth HID gamepad via BlueZ; a host can then pair
+with it. Advertising requires a Bluetooth adapter that supports peripheral mode.
+
 Power off a wireless controller (disconnects it over Bluetooth via BlueZ):
 
 ```sh
