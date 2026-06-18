@@ -148,9 +148,10 @@ events, relative mouse-axis events with `rel` plus `value`, axis set events,
 stick deflection events with `stick` plus `x`/`y` unit values, release-side
 events, pauses, and timed `cancel`/`break` events that stop queued macro
 output. Command rows can run PadProxy commands such as
-stopping queued and held macro output or launch an external command without
-blocking remap input. The editor shows implemented and planned
-virtual outputs, but only implemented outputs can be applied. `Apply` starts a
+stopping queued and held macro output, turning the remap off with `remap_off`
+(an emergency off bound to a controller button), or launch an external command
+without blocking remap input. The editor lets you pick any of the supported
+virtual outputs. `Apply` starts a
 background remap using the selected controller and current profile contents;
 `Remap Off` stops it and removes the virtual
 controller. The `YAML` tab remains available for raw edits. `Save` writes the

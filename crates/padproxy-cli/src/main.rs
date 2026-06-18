@@ -184,9 +184,12 @@ fn run_foreground_profile(profile: Profile, source_device_path: String) -> Resul
     }
     eprintln!("PadProxy remap is running. Press Ctrl-C to stop.");
 
-    loop {
+    while !runtime.stop_requested() {
         runtime.pump_once()?;
     }
+
+    eprintln!("PadProxy remap turned off by a remap_off command mapping.");
+    Ok(())
 }
 
 fn list_slots(controller: Option<&str>) -> Result<()> {

@@ -56,7 +56,8 @@ Source pages consulted:
 - Mute physical input while virtual output is active.
 - Disable a source button entirely. Done for controller inputs.
 - Commands, such as turn remap off. Basic PadProxy command mappings done for
-  stopping queued and held macros and running external commands.
+  stopping queued and held macros, running external commands, and a `remap_off`
+  command that turns the active remap off from a bound button.
 - Launch app / run command mappings. Basic non-blocking external command
   launch done for controller command mappings.
 
@@ -202,7 +203,9 @@ Source pages consulted:
   help commands done.
 - Local API/DBus service.
 - Per-emulator/game launch integration.
-- Emergency remap off.
+- Emergency remap off. Done through a `remap_off` command mapping that stops
+  the running remap, releases the virtual device, and ungrabs the source
+  controller; during a launch it leaves the launched program running.
 - Blocklist for apps/games where remap should not apply.
 - Logging and diagnostic export. Basic JSON diagnostic export is done with
   `padproxyctl diagnostics`; structured runtime logging remains.

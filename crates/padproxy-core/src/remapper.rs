@@ -69,6 +69,7 @@ pub struct RemapRuntime {
     mouse_stick_states: HashMap<EventCode, MouseStickState>,
     command_children: Vec<Child>,
     virtual_nodes: Vec<String>,
+    stop_requested: bool,
 }
 
 struct RuntimeLayer {
@@ -192,6 +193,15 @@ pub fn launch_with_remap(options: LaunchOptions) -> Result<i32> {
         }
 
         runtime.pump_once()?;
+
+        if runtime.stop_requested() {
+            // A remap_off command fired: release the virtual device and ungrab
+            // the source, but let the launched program keep running.
+            eprintln!("PadProxy remap turned off; releasing devices but leaving the launched program running.");
+            drop(runtime);
+            let status = child.wait()?;
+            return Ok(status.code().unwrap_or(1));
+        }
     }
 }
 
@@ -201,7 +211,7 @@ pub fn run_remap_until_stop(options: RemapOptions, stop: &AtomicBool) -> Result<
         virtual_nodes: runtime.virtual_nodes().to_vec(),
     };
 
-    while !stop.load(Ordering::Relaxed) {
+    while !stop.load(Ordering::Relaxed) && !runtime.stop_requested() {
         runtime.pump_once()?;
     }
 
@@ -299,11 +309,18 @@ impl RemapRuntime {
             mouse_stick_states: HashMap::new(),
             command_children: Vec::new(),
             virtual_nodes,
+            stop_requested: false,
         })
     }
 
     pub fn virtual_nodes(&self) -> &[String] {
         &self.virtual_nodes
+    }
+
+    /// Returns true once a `remap_off` command mapping has fired, signalling
+    /// that the remap loop should stop and release its devices.
+    pub fn stop_requested(&self) -> bool {
+        self.stop_requested
     }
 
     pub fn pump_once(&mut self) -> Result<()> {
@@ -956,6 +973,10 @@ impl RemapRuntime {
         match settings.action {
             CommandAction::StopMacros => self.stop_all_macros(output),
             CommandAction::RunCommand => self.spawn_command(&settings.command_line),
+            CommandAction::RemapOff => {
+                self.stop_all_macros(output);
+                self.stop_requested = true;
+            }
         }
     }
 

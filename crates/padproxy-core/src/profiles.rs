@@ -102,6 +102,9 @@ pub struct CommandSettings {
 pub enum CommandAction {
     StopMacros,
     RunCommand,
+    /// Emergency "turn remap off": stop the running remap, release the virtual
+    /// device, and ungrab the source controller.
+    RemapOff,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -1292,12 +1295,26 @@ fn parse_command_settings(
     Ok(Some(settings))
 }
 
+fn command_action_keyword(action: CommandAction) -> &'static str {
+    match action {
+        CommandAction::StopMacros => "stop_macros",
+        CommandAction::RunCommand => "run_command",
+        CommandAction::RemapOff => "remap_off",
+    }
+}
+
 fn parse_command_action(value: &str) -> Result<CommandAction> {
     match normalize_mapping_keyword(value).as_str() {
         "stop_macros" | "stop_all_macros" | "cancel_macros" | "cancel_all_macros"
         | "break_macros" | "clear_macro_queue" => Ok(CommandAction::StopMacros),
         "run" | "run_command" | "launch" | "launch_app" | "launch_application" | "exec"
         | "execute" => Ok(CommandAction::RunCommand),
+        "remap_off"
+        | "turn_remap_off"
+        | "stop_remap"
+        | "emergency_off"
+        | "emergency_remap_off"
+        | "off" => Ok(CommandAction::RemapOff),
         other => Err(anyhow!("unknown command action {other}")),
     }
 }
@@ -1343,10 +1360,11 @@ fn parse_command_object(
     };
 
     let command_line = match action {
-        CommandAction::StopMacros => {
+        CommandAction::StopMacros | CommandAction::RemapOff => {
             if has_run_fields {
                 return Err(anyhow!(
-                    "stop_macros command mapping from {from_name} in {context} cannot use command_line"
+                    "{} command mapping from {from_name} in {context} cannot use command_line",
+                    command_action_keyword(action)
                 ));
             }
             Vec::new()
@@ -2715,6 +2733,49 @@ mappings:
             program_command.command_line,
             vec!["notify-send", "PadProxy", "mapping fired"]
         );
+    }
+
+    #[test]
+    fn parses_remap_off_command_mappings() {
+        let profile = parse_profile_bytes(
+            br#"
+id: emergency
+mappings:
+  - from: btn:mode
+    action: command
+    command: remap_off
+  - from: btn:select
+    command:
+      action: turn_remap_off
+"#,
+            Path::new("emergency.yaml"),
+        )
+        .unwrap();
+
+        assert_eq!(profile.mappings.len(), 2);
+        for mapping in &profile.mappings {
+            assert_eq!(mapping.action, MappingAction::Command);
+            let command = mapping.command.as_ref().unwrap();
+            assert_eq!(command.action, CommandAction::RemapOff);
+            assert!(command.command_line.is_empty());
+        }
+    }
+
+    #[test]
+    fn rejects_remap_off_with_command_line() {
+        let error = parse_profile_bytes(
+            br#"
+id: bad-emergency
+mappings:
+  - from: btn:mode
+    command:
+      action: remap_off
+      args: ["echo", "nope"]
+"#,
+            Path::new("bad-emergency.yaml"),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("remap_off"));
     }
 
     #[test]
